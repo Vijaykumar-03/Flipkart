@@ -1,0 +1,772 @@
+pipeline {
+
+    agent any
+
+    environment {
+
+        // =====================================================
+        // AWS CONFIGURATION
+        // =====================================================
+
+        AWS_REGION = 'ap-south-2'
+        AWS_ACCOUNT_ID = '732231074251'
+
+        // =====================================================
+        // ECR CONFIGURATION
+        // =====================================================
+
+        ECR_REPOSITORY = 'devops-ecr'
+
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+        IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPOSITORY}"
+
+        // =====================================================
+        // EKS CONFIGURATION
+        // =====================================================
+
+        EKS_CLUSTER = 'devops-eks'
+
+        // =====================================================
+        // JENKINS AWS CREDENTIAL
+        // Jenkins credential type:
+        // Username with password
+        // Username = AWS Access Key ID
+        // Password = AWS Secret Access Key
+        // ID = aws-credentials
+        // =====================================================
+
+        AWS_CREDENTIAL_ID = 'aws-credentials'
+
+        // =====================================================
+        // TRIVY CACHE
+        // /tmp has more available space than root filesystem
+        // =====================================================
+
+        TRIVY_CACHE_DIR = '/tmp/trivy-cache'
+    }
+
+
+    stages {
+
+        // =====================================================
+        // 1. CHECKOUT
+        // =====================================================
+
+        stage('Checkout') {
+
+            steps {
+
+                echo 'Checking out code from GitHub...'
+
+                git(
+                    branch: 'main',
+                    url: 'https://github.com/Vijaykumar-03/Flipkart.git'
+                )
+
+                sh '''
+                    set -e
+
+                    echo "=========================================="
+                    echo "REPOSITORY"
+                    echo "=========================================="
+
+                    pwd
+
+                    ls -la
+
+                    echo "=========================================="
+                    echo "GIT COMMIT"
+                    echo "=========================================="
+
+                    git log -1 --oneline
+
+                    echo "=========================================="
+                    echo "FILES"
+                    echo "=========================================="
+
+                    find . -maxdepth 3 -type f \
+                        -not -path './.git/*' \
+                        -not -path './venv/*'
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 2. PREPARE PYTHON ENVIRONMENT
+        // =====================================================
+
+        stage('Prepare Python Environment') {
+
+            steps {
+
+                echo 'Preparing Python environment...'
+
+                sh '''
+                    set -e
+
+                    echo "=========================================="
+                    echo "PYTHON VERSION"
+                    echo "=========================================="
+
+                    python3 --version
+
+                    echo "=========================================="
+                    echo "CHECKING ENSUREPIP"
+                    echo "=========================================="
+
+                    python3 -m ensurepip --version
+
+                    echo "=========================================="
+                    echo "CREATING VIRTUAL ENVIRONMENT"
+                    echo "=========================================="
+
+                    rm -rf venv
+
+                    python3 -m venv venv
+
+                    echo "=========================================="
+                    echo "VIRTUAL ENVIRONMENT CREATED"
+                    echo "=========================================="
+
+                    . venv/bin/activate
+
+                    python --version
+
+                    pip --version
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 3. INSTALL DEPENDENCIES
+        // =====================================================
+
+        stage('Install Dependencies') {
+
+            steps {
+
+                echo 'Installing Python dependencies...'
+
+                sh '''
+                    set -e
+
+                    . venv/bin/activate
+
+                    echo "=========================================="
+                    echo "INSTALLING DEPENDENCIES"
+                    echo "=========================================="
+
+                    if [ -f requirements.txt ]; then
+
+                        echo "requirements.txt found."
+
+                        pip install -r requirements.txt
+
+                    else
+
+                        echo "requirements.txt not found."
+
+                        echo "Installing Flask."
+
+                        pip install Flask
+
+                    fi
+
+                    echo "=========================================="
+                    echo "INSTALLED PACKAGES"
+                    echo "=========================================="
+
+                    pip list
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 4. LINT
+        // =====================================================
+
+        stage('Lint') {
+
+            steps {
+
+                echo 'Running Python lint...'
+
+                sh '''
+                    set -e
+
+                    . venv/bin/activate
+
+                    pip install flake8
+
+                    echo "=========================================="
+                    echo "RUNNING FLAKE8"
+                    echo "=========================================="
+
+                    flake8 . \
+                        --exclude=venv,.git \
+                        --ignore=E501,W503 \
+                        || true
+
+                    echo "Lint completed."
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 5. UNIT TEST
+        // =====================================================
+
+        stage('Unit Test') {
+
+            steps {
+
+                echo 'Running unit tests...'
+
+                sh '''
+                    set -e
+
+                    . venv/bin/activate
+
+                    if [ -d tests ]; then
+
+                        echo "Tests directory found."
+
+                        pip install pytest
+
+                        pytest -v
+
+                    else
+
+                        echo "No tests directory found."
+
+                        echo "Skipping unit tests."
+
+                    fi
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 6. TRIVY FILESYSTEM SCAN
+        // =====================================================
+
+        stage('Trivy Filesystem Scan') {
+
+            steps {
+
+                echo 'Running Trivy filesystem scan...'
+
+                sh '''
+                    set -e
+
+                    echo "=========================================="
+                    echo "TRIVY VERSION"
+                    echo "=========================================="
+
+                    trivy --version
+
+                    echo "=========================================="
+                    echo "CHECKING TRIVY CONFIG"
+                    echo "=========================================="
+
+                    if [ ! -f trivy.yaml ]; then
+
+                        echo "ERROR: trivy.yaml not found."
+
+                        exit 1
+
+                    fi
+
+                    ls -l trivy.yaml
+
+                    echo "=========================================="
+                    echo "PREPARING TRIVY CACHE"
+                    echo "=========================================="
+
+                    rm -rf "${TRIVY_CACHE_DIR}"
+
+                    mkdir -p "${TRIVY_CACHE_DIR}"
+
+                    echo "Trivy cache:"
+                    echo "${TRIVY_CACHE_DIR}"
+
+                    echo "=========================================="
+                    echo "DISK SPACE"
+                    echo "=========================================="
+
+                    df -h /
+
+                    df -h /tmp
+
+                    echo "=========================================="
+                    echo "TRIVY FILESYSTEM SCAN"
+                    echo "=========================================="
+
+                    trivy \
+                        --config ./trivy.yaml \
+                        --cache-dir "${TRIVY_CACHE_DIR}" \
+                        fs . \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed
+
+                    echo "=========================================="
+                    echo "TRIVY FILESYSTEM SCAN COMPLETED"
+                    echo "=========================================="
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 7. DOCKER BUILD
+        // =====================================================
+
+        stage('Docker Build') {
+
+            steps {
+
+                echo 'Building Docker image...'
+
+                sh '''
+                    set -e
+
+                    echo "=========================================="
+                    echo "DOCKER VERSION"
+                    echo "=========================================="
+
+                    docker --version
+
+                    echo "=========================================="
+                    echo "DOCKERFILE"
+                    echo "=========================================="
+
+                    cat Dockerfile
+
+                    echo "=========================================="
+                    echo "BUILDING IMAGE"
+                    echo "=========================================="
+
+                    docker build \
+                        -t "${IMAGE_NAME}:${BUILD_NUMBER}" \
+                        -t "${IMAGE_NAME}:latest" \
+                        .
+
+                    echo "=========================================="
+                    echo "DOCKER BUILD SUCCESSFUL"
+                    echo "=========================================="
+
+                    docker images | grep "${ECR_REPOSITORY}" || true
+
+                    echo "=========================================="
+                    echo "DISK SPACE"
+                    echo "=========================================="
+
+                    df -h /
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 8. TRIVY IMAGE SCAN
+        // =====================================================
+
+        stage('Trivy Image Scan') {
+
+            steps {
+
+                echo 'Running Trivy image scan...'
+
+                sh '''
+                    set -e
+
+                    echo "=========================================="
+                    echo "TRIVY IMAGE SCAN"
+                    echo "=========================================="
+
+                    trivy \
+                        --config ./trivy.yaml \
+                        --cache-dir "${TRIVY_CACHE_DIR}" \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        "${IMAGE_NAME}:${BUILD_NUMBER}"
+
+                    echo "=========================================="
+                    echo "TRIVY IMAGE SCAN COMPLETED"
+                    echo "=========================================="
+                '''
+            }
+        }
+
+
+        // =====================================================
+        // 9. AWS AUTHENTICATION
+        // =====================================================
+
+        stage('AWS Authentication') {
+
+            steps {
+
+                echo 'Authenticating with AWS...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "=========================================="
+                        echo "AWS CLI"
+                        echo "=========================================="
+
+                        aws --version
+
+                        echo "=========================================="
+                        echo "AWS IDENTITY"
+                        echo "=========================================="
+
+                        aws sts get-caller-identity
+
+                        echo "=========================================="
+                        echo "AWS AUTHENTICATION SUCCESSFUL"
+                        echo "=========================================="
+                    '''
+                }
+            }
+        }
+
+
+        // =====================================================
+        // 10. ECR LOGIN
+        // =====================================================
+
+        stage('ECR Login') {
+
+            steps {
+
+                echo 'Logging into Amazon ECR...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "=========================================="
+                        echo "ECR LOGIN"
+                        echo "=========================================="
+
+                        aws ecr get-login-password \
+                            --region "${AWS_REGION}" \
+                        | docker login \
+                            --username AWS \
+                            --password-stdin "${ECR_REGISTRY}"
+
+                        echo "=========================================="
+                        echo "ECR LOGIN SUCCESSFUL"
+                        echo "=========================================="
+                    '''
+                }
+            }
+        }
+
+
+        // =====================================================
+        // 11. PUSH IMAGE TO ECR
+        // =====================================================
+
+        stage('Push Image to ECR') {
+
+            steps {
+
+                echo 'Pushing Docker image to ECR...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "=========================================="
+                        echo "PUSH BUILD IMAGE"
+                        echo "=========================================="
+
+                        docker push "${IMAGE_NAME}:${BUILD_NUMBER}"
+
+                        echo "=========================================="
+                        echo "PUSH LATEST IMAGE"
+                        echo "=========================================="
+
+                        docker push "${IMAGE_NAME}:latest"
+
+                        echo "=========================================="
+                        echo "ECR PUSH SUCCESSFUL"
+                        echo "=========================================="
+
+                        echo "Build image:"
+                        echo "${IMAGE_NAME}:${BUILD_NUMBER}"
+
+                        echo "Latest image:"
+                        echo "${IMAGE_NAME}:latest"
+                    '''
+                }
+            }
+        }
+
+
+        // =====================================================
+        // 12. CONNECT TO EKS
+        // =====================================================
+
+        stage('Connect to EKS') {
+
+            steps {
+
+                echo 'Connecting to EKS...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "=========================================="
+                        echo "UPDATING KUBECONFIG"
+                        echo "=========================================="
+
+                        aws eks update-kubeconfig \
+                            --region "${AWS_REGION}" \
+                            --name "${EKS_CLUSTER}"
+
+                        echo "=========================================="
+                        echo "KUBECTL VERSION"
+                        echo "=========================================="
+
+                        kubectl version --client
+
+                        echo "=========================================="
+                        echo "EKS CLUSTER"
+                        echo "=========================================="
+
+                        kubectl cluster-info
+
+                        echo "=========================================="
+                        echo "EKS NODES"
+                        echo "=========================================="
+
+                        kubectl get nodes
+                    '''
+                }
+            }
+        }
+
+
+        // =====================================================
+        // 13. DEPLOY TO EKS
+        // =====================================================
+
+        stage('Deploy to EKS') {
+
+            steps {
+
+                echo 'Deploying application to EKS...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        echo "=========================================="
+                        echo "CHECKING KUBERNETES FILES"
+                        echo "=========================================="
+
+                        if [ ! -f k8s/deployment.yml ]; then
+
+                            echo "ERROR: k8s/deployment.yml not found."
+
+                            ls -la k8s
+
+                            exit 1
+
+                        fi
+
+                        if [ ! -f k8s/service.yml ]; then
+
+                            echo "ERROR: k8s/service.yml not found."
+
+                            ls -la k8s
+
+                            exit 1
+
+                        fi
+
+                        echo "=========================================="
+                        echo "KUBERNETES FILES"
+                        echo "=========================================="
+
+                        ls -la k8s/
+
+                        echo "=========================================="
+                        echo "UPDATING IMAGE TAG"
+                        echo "=========================================="
+
+                        sed -i \
+                            "s|image:.*|image: ${IMAGE_NAME}:${BUILD_NUMBER}|g" \
+                            k8s/deployment.yml
+
+                        echo "Deployment image:"
+                        grep "image:" k8s/deployment.yml
+
+                        echo "=========================================="
+                        echo "VALIDATING DEPLOYMENT"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            --dry-run=client \
+                            -f k8s/deployment.yml
+
+                        echo "=========================================="
+                        echo "VALIDATING SERVICE"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            --dry-run=client \
+                            -f k8s/service.yml
+
+                        echo "=========================================="
+                        echo "APPLYING DEPLOYMENT"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            -f k8s/deployment.yml
+
+                        echo "=========================================="
+                        echo "APPLYING SERVICE"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            -f k8s/service.yml
+
+                        echo "=========================================="
+                        echo "DEPLOYMENT STATUS"
+                        echo "=========================================="
+
+                        kubectl get deployment
+
+                        echo "=========================================="
+                        echo "PODS"
+                        echo "=========================================="
+
+                        kubectl get pods -o wide
+
+                        echo "=========================================="
+                        echo "SERVICES"
+                        echo "=========================================="
+
+                        kubectl get services
+
+                        echo "=========================================="
+                        echo "EKS DEPLOYMENT COMPLETED"
+                        echo "=========================================="
+                    '''
+                }
+            }
+        }
+    }
+
+
+    // =========================================================
+    // POST ACTIONS
+    // =========================================================
+
+    post {
+
+        success {
+
+            echo """
+==========================================
+        PIPELINE SUCCESS
+==========================================
+
+Build Number:
+${BUILD_NUMBER}
+
+Docker Image:
+${IMAGE_NAME}:${BUILD_NUMBER}
+
+Latest Image:
+${IMAGE_NAME}:latest
+
+EKS Cluster:
+${EKS_CLUSTER}
+
+AWS Region:
+${AWS_REGION}
+
+==========================================
+"""
+        }
+
+
+        failure {
+
+            echo """
+==========================================
+        PIPELINE FAILED
+==========================================
+
+Build Number:
+${BUILD_NUMBER}
+
+Check the FIRST failed stage above.
+
+==========================================
+"""
+        }
+
+
+        always {
+
+            sh '''
+                docker logout "${ECR_REGISTRY}" || true
+
+                rm -rf "${TRIVY_CACHE_DIR}" || true
+            '''
+
+            cleanWs()
+        }
+    }
+}
