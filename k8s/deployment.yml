@@ -1,5 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
+
 metadata:
   name: flipkart-app
   namespace: default
@@ -13,7 +14,6 @@ spec:
 
   strategy:
     type: RollingUpdate
-
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 1
@@ -39,7 +39,6 @@ spec:
             requests:
               cpu: "100m"
               memory: "128Mi"
-
             limits:
               cpu: "500m"
               memory: "512Mi"
