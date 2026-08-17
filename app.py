@@ -8,15 +8,16 @@ def register():
 
     if request.method == "POST":
 
-        fullname = request.form["fullname"]
-        email = request.form["email"]
-        mobile = request.form["mobile"]
-        password = request.form["password"]
+        fullname = request.form.get("fullname")
+        email = request.form.get("email")
+        mobile = request.form.get("mobile")
+        password = request.form.get("password")
 
         print("Name:", fullname)
         print("Email:", email)
         print("Mobile:", mobile)
-        print("Password:", password)
+
+        # Do NOT print passwords in production logs
 
         return f"Welcome {fullname}! Registration Successful."
 
