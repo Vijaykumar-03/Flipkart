@@ -4,26 +4,48 @@
   become: yes
 
   vars:
+
+    # ==========================================
+    # AWS CONFIGURATION
+    # ==========================================
+
     aws_region: "ap-south-1"
     aws_account_id: "847547470089"
+
+    # AWS credentials should come from Ansible Vault
+    aws_access_key_id: "{{ vault_aws_access_key_id }}"
+    aws_secret_access_key: "{{ vault_aws_secret_access_key }}"
+
+    # ==========================================
+    # ECR CONFIGURATION
+    # ==========================================
 
     ecr_repository: "devops-ecr"
     docker_image: "devops-ecr"
     docker_tag: "v1"
 
     ecr_registry: "847547470089.dkr.ecr.ap-south-1.amazonaws.com"
+
     ecr_image: "847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1"
+
+    # ==========================================
+    # GITHUB CONFIGURATION
+    # ==========================================
 
     github_repo: "https://github.com/Vijaykumar-03/Flipkart.git"
     app_directory: "/opt/Flipkart"
 
-    # SonarQube
+    # ==========================================
+    # SONARQUBE CONFIGURATION
+    # ==========================================
+
     sonarqube_container: "sonarqube"
     sonarqube_db_container: "sonarqube-db"
 
     sonarqube_db_name: "sonarqube"
     sonarqube_db_user: "sonarqube"
     sonarqube_db_password: "sonarqube123"
+
 
   tasks:
 
@@ -34,6 +56,7 @@
     - name: Update apt cache
       apt:
         update_cache: yes
+
 
     # ==========================================
     # BASIC PACKAGES
@@ -48,10 +71,12 @@
           - awscli
           - curl
           - wget
+          - unzip
           - ca-certificates
           - gnupg
           - fontconfig
         state: present
+
 
     # ==========================================
     # NGINX
@@ -67,6 +92,7 @@
         name: nginx
         state: started
         enabled: yes
+
 
     # ==========================================
     # DOCKER
@@ -110,6 +136,7 @@
         state: started
         enabled: yes
 
+
     # ==========================================
     # KUBECTL
     # ==========================================
@@ -131,6 +158,7 @@
         dest: /usr/local/bin/kubectl
         mode: '0755'
 
+
     # ==========================================
     # JAVA
     # ==========================================
@@ -139,6 +167,7 @@
       apt:
         name: openjdk-21-jre
         state: present
+
 
     # ==========================================
     # JENKINS
@@ -171,14 +200,16 @@
         state: started
         enabled: yes
 
+
     # ==========================================
-    # SONARQUBE
+    # SONARQUBE NETWORK
     # ==========================================
 
     - name: Create SonarQube Docker network
       community.docker.docker_network:
         name: sonarqube-network
         state: present
+
 
     # ==========================================
     # SONARQUBE POSTGRESQL
@@ -195,14 +226,18 @@
         image: postgres:15
         state: started
         restart_policy: unless-stopped
+
         env:
           POSTGRES_USER: "{{ sonarqube_db_user }}"
           POSTGRES_PASSWORD: "{{ sonarqube_db_password }}"
           POSTGRES_DB: "{{ sonarqube_db_name }}"
+
         volumes:
           - sonarqube-postgresql:/var/lib/postgresql/data
+
         networks:
           - name: sonarqube-network
+
 
     # ==========================================
     # SONARQUBE VOLUMES
@@ -223,6 +258,7 @@
         name: sonarqube-logs
         state: present
 
+
     # ==========================================
     # SONARQUBE CONTAINER
     # ==========================================
@@ -233,19 +269,25 @@
         image: sonarqube:lts-community
         state: started
         restart_policy: unless-stopped
+
         published_ports:
           - "9000:9000"
+
         env:
           SONAR_JDBC_URL: "jdbc:postgresql://{{ sonarqube_db_container }}:5432/{{ sonarqube_db_name }}"
           SONAR_JDBC_USERNAME: "{{ sonarqube_db_user }}"
           SONAR_JDBC_PASSWORD: "{{ sonarqube_db_password }}"
+
         volumes:
           - sonarqube-data:/opt/sonarqube/data
           - sonarqube-extensions:/opt/sonarqube/extensions
           - sonarqube-logs:/opt/sonarqube/logs
+
         networks:
           - name: sonarqube-network
+
         memory: "2g"
+
 
     # ==========================================
     # WAIT FOR SONARQUBE
@@ -256,10 +298,29 @@
         url: http://localhost:9000/api/system/status
         method: GET
         status_code: 200
+
       register: sonarqube_status
-      until: sonarqube_status.status == 200
+
+      until:
+        - sonarqube_status.status == 200
+
       retries: 30
       delay: 10
+
+
+    # ==========================================
+    # AWS CONFIGURE
+    # ==========================================
+
+    - name: Configure AWS CLI
+      shell: |
+        aws configure set aws_access_key_id "{{ aws_access_key_id }}"
+        aws configure set aws_secret_access_key "{{ aws_secret_access_key }}"
+        aws configure set region "{{ aws_region }}"
+        aws configure set output json
+
+      no_log: true
+
 
     # ==========================================
     # VERIFY AWS
@@ -267,12 +328,16 @@
 
     - name: Check AWS identity
       command: aws sts get-caller-identity
+
       register: aws_identity
+
       changed_when: false
+
 
     - name: Display AWS identity
       debug:
         var: aws_identity.stdout
+
 
     # ==========================================
     # CLONE GITHUB PROJECT
@@ -283,11 +348,13 @@
         path: "{{ app_directory }}"
         state: absent
 
+
     - name: Clone Flipkart project from GitHub
       git:
         repo: "{{ github_repo }}"
         dest: "{{ app_directory }}"
         version: main
+
 
     # ==========================================
     # LOGIN TO ECR
@@ -299,7 +366,9 @@
         docker login \
         --username AWS \
         --password-stdin {{ ecr_registry }}
+
       changed_when: false
+
 
     # ==========================================
     # BUILD DOCKER IMAGE
@@ -310,8 +379,10 @@
         name: "{{ docker_image }}"
         tag: "{{ docker_tag }}"
         source: build
+
         build:
           path: "{{ app_directory }}"
+
 
     # ==========================================
     # TAG DOCKER IMAGE
@@ -325,6 +396,7 @@
         source: local
         force_tag: true
 
+
     # ==========================================
     # PUSH IMAGE TO ECR
     # ==========================================
@@ -336,6 +408,7 @@
         push: true
         source: local
 
+
     # ==========================================
     # VERIFICATION
     # ==========================================
@@ -345,48 +418,63 @@
       register: git_version
       changed_when: false
 
+
     - name: Check Python
       command: python3 --version
       register: python_version
       changed_when: false
+
 
     - name: Check AWS CLI
       command: aws --version
       register: aws_version
       changed_when: false
 
+
     - name: Check Nginx
       command: nginx -v
       register: nginx_version
       changed_when: false
+
 
     - name: Check Docker
       command: docker --version
       register: docker_version
       changed_when: false
 
+
     - name: Check kubectl
       command: kubectl version --client
       register: kubectl_result
       changed_when: false
+
 
     - name: Check Java
       command: java -version
       register: java_version
       changed_when: false
 
+
     - name: Check Jenkins
       command: systemctl is-active jenkins
       register: jenkins_status
       changed_when: false
+
 
     - name: Check SonarQube
       uri:
         url: http://localhost:9000/api/system/status
         method: GET
         status_code: 200
+
       register: sonarqube_final_status
+
       changed_when: false
+
+
+    # ==========================================
+    # DISPLAY INSTALLED TOOLS
+    # ==========================================
 
     - name: Display installed tools
       debug:
