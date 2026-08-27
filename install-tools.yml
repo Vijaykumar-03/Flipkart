@@ -1,21 +1,33 @@
 ---
-- name: Install DevOps Tools
+- name: Install DevOps Tools and Build Push Docker Image
   hosts: servers
   become: yes
 
+  vars:
+    aws_region: "ap-south-1"
+    aws_account_id: "847547470089"
+    ecr_repository: "devops-ecr"
+    docker_image: "devops-ecr"
+    docker_tag: "v1"
+    ecr_registry: "847547470089.dkr.ecr.ap-south-1.amazonaws.com"
+    ecr_image: "847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1"
+
+    github_repo: "https://github.com/Vijaykumar-03/Flipkart.git"
+    app_directory: "/opt/Flipkart"
+
   tasks:
 
-    # -------------------------
-    # Update apt cache
-    # -------------------------
+    # ==========================================
+    # UPDATE APT
+    # ==========================================
 
     - name: Update apt cache
       apt:
         update_cache: yes
 
-    # -------------------------
-    # Basic packages
-    # -------------------------
+    # ==========================================
+    # BASIC PACKAGES
+    # ==========================================
 
     - name: Install required packages
       apt:
@@ -31,9 +43,9 @@
           - fontconfig
         state: present
 
-    # -------------------------
-    # Nginx
-    # -------------------------
+    # ==========================================
+    # NGINX
+    # ==========================================
 
     - name: Install Nginx
       apt:
@@ -46,9 +58,9 @@
         state: started
         enabled: yes
 
-    # -------------------------
-    # Docker
-    # -------------------------
+    # ==========================================
+    # DOCKER
+    # ==========================================
 
     - name: Create Docker keyring directory
       file:
@@ -68,7 +80,7 @@
         state: present
         filename: docker
 
-    - name: Update apt cache after adding Docker repository
+    - name: Update apt cache after Docker repository
       apt:
         update_cache: yes
 
@@ -88,9 +100,9 @@
         state: started
         enabled: yes
 
-    # -------------------------
-    # kubectl
-    # -------------------------
+    # ==========================================
+    # KUBECTL
+    # ==========================================
 
     - name: Download kubectl version
       get_url:
@@ -109,18 +121,18 @@
         dest: /usr/local/bin/kubectl
         mode: '0755'
 
-    # -------------------------
-    # Java
-    # -------------------------
+    # ==========================================
+    # JAVA
+    # ==========================================
 
     - name: Install Java 21
       apt:
         name: openjdk-21-jre
         state: present
 
-    # -------------------------
-    # Jenkins
-    # -------------------------
+    # ==========================================
+    # JENKINS
+    # ==========================================
 
     - name: Add Jenkins GPG key
       get_url:
@@ -149,9 +161,84 @@
         state: started
         enabled: yes
 
-    # -------------------------
-    # Verification
-    # -------------------------
+    # ==========================================
+    # VERIFY AWS
+    # ==========================================
+
+    - name: Check AWS identity
+      command: aws sts get-caller-identity
+      register: aws_identity
+      changed_when: false
+
+    - name: Display AWS identity
+      debug:
+        var: aws_identity.stdout
+
+    # ==========================================
+    # CLONE GITHUB PROJECT
+    # ==========================================
+
+    - name: Remove old application directory
+      file:
+        path: "{{ app_directory }}"
+        state: absent
+
+    - name: Clone Flipkart project from GitHub
+      git:
+        repo: "{{ github_repo }}"
+        dest: "{{ app_directory }}"
+        version: main
+
+    # ==========================================
+    # LOGIN TO ECR
+    # ==========================================
+
+    - name: Login to Amazon ECR
+      shell: |
+        aws ecr get-login-password --region {{ aws_region }} | \
+        docker login \
+        --username AWS \
+        --password-stdin {{ ecr_registry }}
+      changed_when: false
+
+    # ==========================================
+    # BUILD DOCKER IMAGE
+    # ==========================================
+
+    - name: Build Docker image
+      community.docker.docker_image:
+        name: "{{ docker_image }}"
+        tag: "{{ docker_tag }}"
+        source: build
+        build:
+          path: "{{ app_directory }}"
+
+    # ==========================================
+    # TAG DOCKER IMAGE
+    # ==========================================
+
+    - name: Tag Docker image for ECR
+      community.docker.docker_image:
+        name: "{{ docker_image }}"
+        tag: "{{ docker_tag }}"
+        repository: "{{ ecr_registry }}/{{ ecr_repository }}"
+        source: local
+        force_tag: true
+
+    # ==========================================
+    # PUSH IMAGE TO ECR
+    # ==========================================
+
+    - name: Push Docker image to ECR
+      community.docker.docker_image:
+        name: "{{ ecr_registry }}/{{ ecr_repository }}"
+        tag: "{{ docker_tag }}"
+        push: true
+        source: local
+
+    # ==========================================
+    # VERIFICATION
+    # ==========================================
 
     - name: Check Git
       command: git --version
@@ -199,3 +286,5 @@
           - "{{ kubectl_result.stdout }}"
           - "Java installed successfully"
           - "Jenkins installed successfully"
+          - "Docker image built: {{ docker_image }}:{{ docker_tag }}"
+          - "ECR image pushed: {{ ecr_image }}"
