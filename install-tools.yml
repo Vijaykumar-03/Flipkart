@@ -14,7 +14,7 @@
         update_cache: yes
 
     # -------------------------
-    # Install basic packages
+    # Basic packages
     # -------------------------
 
     - name: Install required packages
@@ -25,12 +25,14 @@
           - python3-pip
           - awscli
           - curl
+          - wget
           - ca-certificates
           - gnupg
+          - fontconfig
         state: present
 
     # -------------------------
-    # Install Nginx
+    # Nginx
     # -------------------------
 
     - name: Install Nginx
@@ -45,7 +47,7 @@
         enabled: yes
 
     # -------------------------
-    # Install Docker
+    # Docker
     # -------------------------
 
     - name: Create Docker keyring directory
@@ -86,17 +88,11 @@
         state: started
         enabled: yes
 
-    - name: Add ubuntu user to Docker group
-      user:
-        name: ubuntu
-        groups: docker
-        append: yes
-
     # -------------------------
-    # Install kubectl
+    # kubectl
     # -------------------------
 
-    - name: Download kubectl
+    - name: Download kubectl version
       get_url:
         url: https://dl.k8s.io/release/stable.txt
         dest: /tmp/kubectl-version
@@ -107,14 +103,54 @@
       register: kubectl_version
       changed_when: false
 
-    - name: Download kubectl binary
+    - name: Download kubectl
       get_url:
         url: "https://dl.k8s.io/release/{{ kubectl_version.stdout }}/bin/linux/amd64/kubectl"
         dest: /usr/local/bin/kubectl
         mode: '0755'
 
     # -------------------------
-    # Verify installations
+    # Java
+    # -------------------------
+
+    - name: Install Java 21
+      apt:
+        name: openjdk-21-jre
+        state: present
+
+    # -------------------------
+    # Jenkins
+    # -------------------------
+
+    - name: Add Jenkins GPG key
+      get_url:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+        dest: /usr/share/keyrings/jenkins-keyring.asc
+        mode: '0644'
+
+    - name: Add Jenkins repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+        state: present
+        filename: jenkins
+
+    - name: Update apt cache for Jenkins
+      apt:
+        update_cache: yes
+
+    - name: Install Jenkins
+      apt:
+        name: jenkins
+        state: present
+
+    - name: Start and enable Jenkins
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    # -------------------------
+    # Verification
     # -------------------------
 
     - name: Check Git
@@ -147,7 +183,12 @@
       register: kubectl_result
       changed_when: false
 
-    - name: Display installed versions
+    - name: Check Java
+      command: java -version
+      register: java_version
+      changed_when: false
+
+    - name: Display installed tools
       debug:
         msg:
           - "{{ git_version.stdout }}"
@@ -156,3 +197,5 @@
           - "{{ nginx_version.stderr }}"
           - "{{ docker_version.stdout }}"
           - "{{ kubectl_result.stdout }}"
+          - "Java installed successfully"
+          - "Jenkins installed successfully"
