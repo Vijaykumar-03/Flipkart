@@ -6,14 +6,24 @@
   vars:
     aws_region: "ap-south-1"
     aws_account_id: "847547470089"
+
     ecr_repository: "devops-ecr"
     docker_image: "devops-ecr"
     docker_tag: "v1"
+
     ecr_registry: "847547470089.dkr.ecr.ap-south-1.amazonaws.com"
     ecr_image: "847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1"
 
     github_repo: "https://github.com/Vijaykumar-03/Flipkart.git"
     app_directory: "/opt/Flipkart"
+
+    # SonarQube
+    sonarqube_container: "sonarqube"
+    sonarqube_db_container: "sonarqube-db"
+
+    sonarqube_db_name: "sonarqube"
+    sonarqube_db_user: "sonarqube"
+    sonarqube_db_password: "sonarqube123"
 
   tasks:
 
@@ -162,6 +172,96 @@
         enabled: yes
 
     # ==========================================
+    # SONARQUBE
+    # ==========================================
+
+    - name: Create SonarQube Docker network
+      community.docker.docker_network:
+        name: sonarqube-network
+        state: present
+
+    # ==========================================
+    # SONARQUBE POSTGRESQL
+    # ==========================================
+
+    - name: Create SonarQube PostgreSQL volume
+      community.docker.docker_volume:
+        name: sonarqube-postgresql
+        state: present
+
+    - name: Create SonarQube PostgreSQL container
+      community.docker.docker_container:
+        name: "{{ sonarqube_db_container }}"
+        image: postgres:15
+        state: started
+        restart_policy: unless-stopped
+        env:
+          POSTGRES_USER: "{{ sonarqube_db_user }}"
+          POSTGRES_PASSWORD: "{{ sonarqube_db_password }}"
+          POSTGRES_DB: "{{ sonarqube_db_name }}"
+        volumes:
+          - sonarqube-postgresql:/var/lib/postgresql/data
+        networks:
+          - name: sonarqube-network
+
+    # ==========================================
+    # SONARQUBE VOLUMES
+    # ==========================================
+
+    - name: Create SonarQube data volume
+      community.docker.docker_volume:
+        name: sonarqube-data
+        state: present
+
+    - name: Create SonarQube extensions volume
+      community.docker.docker_volume:
+        name: sonarqube-extensions
+        state: present
+
+    - name: Create SonarQube logs volume
+      community.docker.docker_volume:
+        name: sonarqube-logs
+        state: present
+
+    # ==========================================
+    # SONARQUBE CONTAINER
+    # ==========================================
+
+    - name: Start SonarQube
+      community.docker.docker_container:
+        name: "{{ sonarqube_container }}"
+        image: sonarqube:lts-community
+        state: started
+        restart_policy: unless-stopped
+        published_ports:
+          - "9000:9000"
+        env:
+          SONAR_JDBC_URL: "jdbc:postgresql://{{ sonarqube_db_container }}:5432/{{ sonarqube_db_name }}"
+          SONAR_JDBC_USERNAME: "{{ sonarqube_db_user }}"
+          SONAR_JDBC_PASSWORD: "{{ sonarqube_db_password }}"
+        volumes:
+          - sonarqube-data:/opt/sonarqube/data
+          - sonarqube-extensions:/opt/sonarqube/extensions
+          - sonarqube-logs:/opt/sonarqube/logs
+        networks:
+          - name: sonarqube-network
+        memory: "2g"
+
+    # ==========================================
+    # WAIT FOR SONARQUBE
+    # ==========================================
+
+    - name: Wait for SonarQube to start
+      uri:
+        url: http://localhost:9000/api/system/status
+        method: GET
+        status_code: 200
+      register: sonarqube_status
+      until: sonarqube_status.status == 200
+      retries: 30
+      delay: 10
+
+    # ==========================================
     # VERIFY AWS
     # ==========================================
 
@@ -275,6 +375,19 @@
       register: java_version
       changed_when: false
 
+    - name: Check Jenkins
+      command: systemctl is-active jenkins
+      register: jenkins_status
+      changed_when: false
+
+    - name: Check SonarQube
+      uri:
+        url: http://localhost:9000/api/system/status
+        method: GET
+        status_code: 200
+      register: sonarqube_final_status
+      changed_when: false
+
     - name: Display installed tools
       debug:
         msg:
@@ -285,6 +398,8 @@
           - "{{ docker_version.stdout }}"
           - "{{ kubectl_result.stdout }}"
           - "Java installed successfully"
-          - "Jenkins installed successfully"
+          - "Jenkins: {{ jenkins_status.stdout }}"
+          - "SonarQube: {{ sonarqube_final_status.json.status | default('UP') }}"
+          - "SonarQube URL: http://YOUR_EC2_PUBLIC_IP:9000"
           - "Docker image built: {{ docker_image }}:{{ docker_tag }}"
           - "ECR image pushed: {{ ecr_image }}"
