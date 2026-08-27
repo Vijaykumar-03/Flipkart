@@ -5,33 +5,154 @@
 
   tasks:
 
+    # -------------------------
+    # Update apt cache
+    # -------------------------
+
     - name: Update apt cache
       apt:
         update_cache: yes
 
-    - name: Install Git
-      apt:
-        name: git
-        state: present
+    # -------------------------
+    # Install basic packages
+    # -------------------------
 
-    - name: Install Python
+    - name: Install required packages
       apt:
         name:
+          - git
           - python3
           - python3-pip
+          - awscli
+          - curl
+          - ca-certificates
+          - gnupg
         state: present
 
-    - name: Install AWS CLI
-      apt:
-        name: awscli
-        state: present
+    # -------------------------
+    # Install Nginx
+    # -------------------------
 
     - name: Install Nginx
       apt:
         name: nginx
         state: present
 
-    # Docker
-    # Jenkins
-    # kubectl
-    # will be added here
+    - name: Start and enable Nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    # -------------------------
+    # Install Docker
+    # -------------------------
+
+    - name: Create Docker keyring directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Update apt cache after adding Docker repository
+      apt:
+        update_cache: yes
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to Docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    # -------------------------
+    # Install kubectl
+    # -------------------------
+
+    - name: Download kubectl
+      get_url:
+        url: https://dl.k8s.io/release/stable.txt
+        dest: /tmp/kubectl-version
+        mode: '0644'
+
+    - name: Read kubectl version
+      command: cat /tmp/kubectl-version
+      register: kubectl_version
+      changed_when: false
+
+    - name: Download kubectl binary
+      get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version.stdout }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    # -------------------------
+    # Verify installations
+    # -------------------------
+
+    - name: Check Git
+      command: git --version
+      register: git_version
+      changed_when: false
+
+    - name: Check Python
+      command: python3 --version
+      register: python_version
+      changed_when: false
+
+    - name: Check AWS CLI
+      command: aws --version
+      register: aws_version
+      changed_when: false
+
+    - name: Check Nginx
+      command: nginx -v
+      register: nginx_version
+      changed_when: false
+
+    - name: Check Docker
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Check kubectl
+      command: kubectl version --client
+      register: kubectl_result
+      changed_when: false
+
+    - name: Display installed versions
+      debug:
+        msg:
+          - "{{ git_version.stdout }}"
+          - "{{ python_version.stdout }}"
+          - "{{ aws_version.stdout }}"
+          - "{{ nginx_version.stderr }}"
+          - "{{ docker_version.stdout }}"
+          - "{{ kubectl_result.stdout }}"
