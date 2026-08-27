@@ -11,7 +11,6 @@ def register():
         fullname = request.form.get("fullname")
         email = request.form.get("email")
         mobile = request.form.get("mobile")
-        password = request.form.get("password")
 
         print("Name:", fullname)
         print("Email:", email)
