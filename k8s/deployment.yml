@@ -26,7 +26,7 @@ spec:
       containers:
         - name: flipkart-app
 
-          image: 847547470089.dkr.ecr.ap-south-2.amazonaws.com/devops-ecr:latest
+          image: 847547470089.dkr.ecr.ap-south-2.amazonaws.com/devops-ecr:v1
           imagePullPolicy: Always
 
           ports:
