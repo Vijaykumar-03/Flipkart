@@ -3,6 +3,9 @@
   hosts: servers
   become: yes
 
+  vars_files:
+    - secrets.yml
+
   vars:
 
     # ==========================================
@@ -347,7 +350,6 @@
       file:
         path: "{{ app_directory }}"
         state: absent
-
 
     - name: Clone Flipkart project from GitHub
       git:
