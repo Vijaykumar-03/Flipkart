@@ -1,5 +1,5 @@
 ---
-- name: Install DevOps Tools and Build Push Docker Image
+- name: Install DevOps Tools
   hosts: servers
   become: yes
 
@@ -19,17 +19,6 @@
     aws_access_key_id: "{{ vault_aws_access_key_id }}"
     aws_secret_access_key: "{{ vault_aws_secret_access_key }}"
 
-    # ==========================================
-    # ECR CONFIGURATION
-    # ==========================================
-
-    ecr_repository: "devops-ecr"
-    docker_image: "devops-ecr"
-    docker_tag: "v1"
-
-    ecr_registry: "847547470089.dkr.ecr.ap-south-1.amazonaws.com"
-
-    ecr_image: "847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1"
 
     # ==========================================
     # GITHUB CONFIGURATION
@@ -37,6 +26,7 @@
 
     github_repo: "https://github.com/Vijaykumar-03/Flipkart.git"
     app_directory: "/opt/Flipkart"
+
 
     # ==========================================
     # SONARQUBE CONFIGURATION
@@ -71,6 +61,7 @@
           - git
           - python3
           - python3-pip
+          - python3-venv
           - awscli
           - curl
           - wget
@@ -205,6 +196,43 @@
 
 
     # ==========================================
+    # TRIVY
+    # ==========================================
+
+    - name: Download Trivy GPG key
+      get_url:
+        url: https://aquasecurity.github.io/trivy-repo/deb/public.key
+        dest: /tmp/trivy-public.key
+        mode: '0644'
+
+    - name: Create Trivy keyring
+      command:
+        cmd: gpg --dearmor --yes -o /usr/share/keyrings/trivy.gpg /tmp/trivy-public.key
+      args:
+        creates: /usr/share/keyrings/trivy.gpg
+
+    - name: Add Trivy repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb {{ ansible_distribution_release }} main"
+        state: present
+        filename: trivy
+
+    - name: Update apt cache for Trivy
+      apt:
+        update_cache: yes
+
+    - name: Install Trivy
+      apt:
+        name: trivy
+        state: present
+
+    - name: Check Trivy version
+      command: trivy --version
+      register: trivy_version
+      changed_when: false
+
+
+    # ==========================================
     # SONARQUBE NETWORK
     # ==========================================
 
@@ -331,9 +359,7 @@
 
     - name: Check AWS identity
       command: aws sts get-caller-identity
-
       register: aws_identity
-
       changed_when: false
 
 
@@ -359,56 +385,34 @@
 
 
     # ==========================================
-    # LOGIN TO ECR
+    # PYTHON VERSION
     # ==========================================
 
-    - name: Login to Amazon ECR
-      shell: |
-        aws ecr get-login-password --region {{ aws_region }} | \
-        docker login \
-        --username AWS \
-        --password-stdin {{ ecr_registry }}
-
+    - name: Check Python version
+      command: python3 --version
+      register: python_version
       changed_when: false
 
 
     # ==========================================
-    # BUILD DOCKER IMAGE
+    # PYTHON VIRTUAL ENVIRONMENT
     # ==========================================
 
-    - name: Build Docker image
-      community.docker.docker_image:
-        name: "{{ docker_image }}"
-        tag: "{{ docker_tag }}"
-        source: build
-
-        build:
-          path: "{{ app_directory }}"
+    - name: Create Python virtual environment
+      command: python3 -m venv .venv
+      args:
+        chdir: "{{ app_directory }}"
+        creates: "{{ app_directory }}/.venv/bin/activate"
 
 
     # ==========================================
-    # TAG DOCKER IMAGE
+    # VERIFY PYTHON VIRTUAL ENVIRONMENT
     # ==========================================
 
-    - name: Tag Docker image for ECR
-      community.docker.docker_image:
-        name: "{{ docker_image }}"
-        tag: "{{ docker_tag }}"
-        repository: "{{ ecr_registry }}/{{ ecr_repository }}"
-        source: local
-        force_tag: true
-
-
-    # ==========================================
-    # PUSH IMAGE TO ECR
-    # ==========================================
-
-    - name: Push Docker image to ECR
-      community.docker.docker_image:
-        name: "{{ ecr_registry }}/{{ ecr_repository }}"
-        tag: "{{ docker_tag }}"
-        push: true
-        source: local
+    - name: Verify Python virtual environment
+      command: "{{ app_directory }}/.venv/bin/python --version"
+      register: venv_python_version
+      changed_when: false
 
 
     # ==========================================
@@ -424,6 +428,18 @@
     - name: Check Python
       command: python3 --version
       register: python_version
+      changed_when: false
+
+
+    - name: Check Python Virtual Environment
+      command: "{{ app_directory }}/.venv/bin/python --version"
+      register: venv_python_version
+      changed_when: false
+
+
+    - name: Check Trivy
+      command: trivy --version
+      register: trivy_version
       changed_when: false
 
 
@@ -483,6 +499,8 @@
         msg:
           - "{{ git_version.stdout }}"
           - "{{ python_version.stdout }}"
+          - "Virtual Environment: {{ venv_python_version.stdout }}"
+          - "{{ trivy_version.stdout }}"
           - "{{ aws_version.stdout }}"
           - "{{ nginx_version.stderr }}"
           - "{{ docker_version.stdout }}"
@@ -491,5 +509,5 @@
           - "Jenkins: {{ jenkins_status.stdout }}"
           - "SonarQube: {{ sonarqube_final_status.json.status | default('UP') }}"
           - "SonarQube URL: http://YOUR_EC2_PUBLIC_IP:9000"
-          - "Docker image built: {{ docker_image }}:{{ docker_tag }}"
-          - "ECR image pushed: {{ ecr_image }}"
+          - "Python virtual environment created successfully"
+          - "Trivy installed successfully"
