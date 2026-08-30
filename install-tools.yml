@@ -154,6 +154,45 @@
 
 
     # ==========================================
+    # EKSCTL
+    # ==========================================
+
+    - name: Install eksctl
+      shell: |
+        set -e
+
+        ARCH=$(uname -m)
+
+        if [ "$ARCH" = "x86_64" ]; then
+          EKSCTL_ARCH="amd64"
+        elif [ "$ARCH" = "aarch64" ]; then
+          EKSCTL_ARCH="arm64"
+        else
+          echo "Unsupported architecture: $ARCH"
+          exit 1
+        fi
+
+        curl --fail --silent --show-error --location \
+          "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_${EKSCTL_ARCH}.tar.gz" \
+          -o /tmp/eksctl.tar.gz
+
+        tar -xzf /tmp/eksctl.tar.gz -C /tmp
+
+        install -m 0755 /tmp/eksctl /usr/local/bin/eksctl
+
+        rm -f /tmp/eksctl.tar.gz
+        rm -f /tmp/eksctl
+      args:
+        creates: /usr/local/bin/eksctl
+
+
+    - name: Check eksctl version
+      command: eksctl version
+      register: eksctl_version
+      changed_when: false
+
+
+    # ==========================================
     # JAVA
     # ==========================================
 
@@ -443,6 +482,12 @@
       changed_when: false
 
 
+    - name: Check eksctl
+      command: eksctl version
+      register: eksctl_version
+      changed_when: false
+
+
     - name: Check AWS CLI
       command: aws --version
       register: aws_version
@@ -501,6 +546,7 @@
           - "{{ python_version.stdout }}"
           - "Virtual Environment: {{ venv_python_version.stdout }}"
           - "{{ trivy_version.stdout }}"
+          - "eksctl: {{ eksctl_version.stdout }}"
           - "{{ aws_version.stdout }}"
           - "{{ nginx_version.stderr }}"
           - "{{ docker_version.stdout }}"
@@ -511,3 +557,4 @@
           - "SonarQube URL: http://YOUR_EC2_PUBLIC_IP:9000"
           - "Python virtual environment created successfully"
           - "Trivy installed successfully"
+          - "eksctl installed successfully"
