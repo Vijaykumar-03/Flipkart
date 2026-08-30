@@ -182,6 +182,7 @@
 
         rm -f /tmp/eksctl.tar.gz
         rm -f /tmp/eksctl
+
       args:
         creates: /usr/local/bin/eksctl
 
@@ -189,6 +190,26 @@
     - name: Check eksctl version
       command: eksctl version
       register: eksctl_version
+      changed_when: false
+
+
+    # ==========================================
+    # HELM
+    # ==========================================
+
+    - name: Install Helm
+      shell: |
+        set -e
+
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      args:
+        creates: /usr/local/bin/helm
+
+
+    - name: Check Helm version
+      command: helm version --short
+      register: helm_version
       changed_when: false
 
 
@@ -247,8 +268,10 @@
     - name: Create Trivy keyring
       command:
         cmd: gpg --dearmor --yes -o /usr/share/keyrings/trivy.gpg /tmp/trivy-public.key
+
       args:
         creates: /usr/share/keyrings/trivy.gpg
+
 
     - name: Add Trivy repository
       apt_repository:
@@ -256,14 +279,17 @@
         state: present
         filename: trivy
 
+
     - name: Update apt cache for Trivy
       apt:
         update_cache: yes
+
 
     - name: Install Trivy
       apt:
         name: trivy
         state: present
+
 
     - name: Check Trivy version
       command: trivy --version
@@ -289,6 +315,7 @@
       community.docker.docker_volume:
         name: sonarqube-postgresql
         state: present
+
 
     - name: Create SonarQube PostgreSQL container
       community.docker.docker_container:
@@ -318,10 +345,12 @@
         name: sonarqube-data
         state: present
 
+
     - name: Create SonarQube extensions volume
       community.docker.docker_volume:
         name: sonarqube-extensions
         state: present
+
 
     - name: Create SonarQube logs volume
       community.docker.docker_volume:
@@ -416,6 +445,7 @@
         path: "{{ app_directory }}"
         state: absent
 
+
     - name: Clone Flipkart project from GitHub
       git:
         repo: "{{ github_repo }}"
@@ -488,6 +518,12 @@
       changed_when: false
 
 
+    - name: Check Helm
+      command: helm version --short
+      register: helm_version
+      changed_when: false
+
+
     - name: Check AWS CLI
       command: aws --version
       register: aws_version
@@ -542,19 +578,36 @@
     - name: Display installed tools
       debug:
         msg:
-          - "{{ git_version.stdout }}"
-          - "{{ python_version.stdout }}"
-          - "Virtual Environment: {{ venv_python_version.stdout }}"
-          - "{{ trivy_version.stdout }}"
+
+          - "=========================================="
+          - "DEVOPS TOOLS INSTALLATION COMPLETE"
+          - "=========================================="
+
+          - "Git: {{ git_version.stdout }}"
+          - "Python: {{ python_version.stdout }}"
+          - "Python Virtual Environment: {{ venv_python_version.stdout }}"
+          - "Trivy: {{ trivy_version.stdout }}"
           - "eksctl: {{ eksctl_version.stdout }}"
-          - "{{ aws_version.stdout }}"
-          - "{{ nginx_version.stderr }}"
-          - "{{ docker_version.stdout }}"
-          - "{{ kubectl_result.stdout }}"
-          - "Java installed successfully"
+          - "Helm: {{ helm_version.stdout }}"
+          - "AWS CLI: {{ aws_version.stdout }}"
+          - "Nginx: {{ nginx_version.stderr }}"
+          - "Docker: {{ docker_version.stdout }}"
+          - "kubectl: {{ kubectl_result.stdout }}"
+          - "Java: Installed successfully"
           - "Jenkins: {{ jenkins_status.stdout }}"
           - "SonarQube: {{ sonarqube_final_status.json.status | default('UP') }}"
+
+          - "=========================================="
+          - "CONFIGURATION"
+          - "=========================================="
+
+          - "Application Directory: {{ app_directory }}"
           - "SonarQube URL: http://YOUR_EC2_PUBLIC_IP:9000"
           - "Python virtual environment created successfully"
           - "Trivy installed successfully"
           - "eksctl installed successfully"
+          - "Helm installed successfully"
+
+          - "=========================================="
+          - "ECR / DOCKER IMAGE OPERATIONS REMOVED"
+          - "=========================================="
