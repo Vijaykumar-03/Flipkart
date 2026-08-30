@@ -1,3 +1,4 @@
+```groovy
 pipeline {
 
     agent any
@@ -11,10 +12,10 @@ pipeline {
     environment {
 
         // =========================================================
-        // GIT
+        // GITHUB
         // =========================================================
 
-        GIT_REPO = 'https://github.com/Vijaykumar-03/Flipkart.git'
+        GIT_REPO   = 'https://github.com/Vijaykumar-03/Flipkart.git'
         GIT_BRANCH = 'main'
 
 
@@ -23,22 +24,13 @@ pipeline {
         // =========================================================
 
         AWS_REGION = 'ap-south-1'
-        AWS_ACCOUNT_ID = '847547470089'
-
-        ECR_REGISTRY =
-            '847547470089.dkr.ecr.ap-south-1.amazonaws.com'
 
 
         // =========================================================
-        // ECR
+        // EXISTING ECR IMAGE
         // =========================================================
 
-        ECR_REPOSITORY = 'devops-ecr'
-        IMAGE_NAME = 'devops-ecr'
-        IMAGE_TAG = 'v1'
-
-        FULL_IMAGE =
-            '847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1'
+        ECR_IMAGE = '847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1'
 
 
         // =========================================================
@@ -46,6 +38,8 @@ pipeline {
         // =========================================================
 
         EKS_CLUSTER_NAME = 'devops-eks'
+
+        VPC_ID = 'vpc-06219807031b348d2'
 
 
         // =========================================================
@@ -56,10 +50,20 @@ pipeline {
 
 
         // =========================================================
+        // AWS LOAD BALANCER CONTROLLER
+        // =========================================================
+
+        LBC_NAMESPACE       = 'kube-system'
+        LBC_SERVICE_ACCOUNT = 'aws-load-balancer-controller'
+
+        LBC_POLICY_ARN = 'arn:aws:iam::847547470089:policy/AWSLoadBalancerControllerIAMPolicy'
+
+
+        // =========================================================
         // SONARQUBE
         // =========================================================
 
-        SONAR_PROJECT_KEY = 'flipkart'
+        SONAR_PROJECT_KEY  = 'flipkart'
         SONAR_PROJECT_NAME = 'Flipkart'
     }
 
@@ -93,10 +97,10 @@ pipeline {
 
 
         // =========================================================
-        // 2. CHECK REQUIRED TOOLS
+        // 2. PYTHON ENVIRONMENT
         // =========================================================
 
-        stage('Check Required Tools') {
+        stage('Python Environment') {
 
             steps {
 
@@ -104,54 +108,10 @@ pipeline {
                     set -e
 
                     echo "=========================================="
-                    echo "CHECKING REQUIRED TOOLS"
+                    echo "PYTHON ENVIRONMENT"
                     echo "=========================================="
 
-                    echo ""
-                    echo "Python:"
                     python3 --version
-
-                    echo ""
-                    echo "Docker:"
-                    docker --version
-
-                    echo ""
-                    echo "AWS CLI:"
-                    aws --version
-
-                    echo ""
-                    echo "Trivy:"
-                    trivy --version
-
-                    echo ""
-                    echo "Kubectl:"
-                    kubectl version --client
-
-                    echo ""
-                    echo "Git:"
-                    git --version
-
-                    echo ""
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 3. PREPARE PYTHON
-        // =========================================================
-
-        stage('Prepare Python') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "PREPARING PYTHON"
-                    echo "=========================================="
 
                     rm -rf .venv
 
@@ -164,17 +124,16 @@ pipeline {
 
                     echo ""
                     echo "Python virtual environment created."
-                    echo "=========================================="
                 '''
             }
         }
 
 
         // =========================================================
-        // 4. INSTALL DEPENDENCIES
+        // 3. INSTALL PYTHON DEPENDENCIES
         // =========================================================
 
-        stage('Install Dependencies') {
+        stage('Install Python Dependencies') {
 
             steps {
 
@@ -182,7 +141,7 @@ pipeline {
                     set -e
 
                     echo "=========================================="
-                    echo "INSTALLING DEPENDENCIES"
+                    echo "INSTALL PYTHON DEPENDENCIES"
                     echo "=========================================="
 
                     . .venv/bin/activate
@@ -193,19 +152,19 @@ pipeline {
                     then
                         pip install -r requirements.txt
                     else
-                        echo "WARNING: requirements.txt not found."
+                        echo "ERROR: requirements.txt not found."
+                        exit 1
                     fi
 
                     echo ""
-                    echo "Dependencies installed."
-                    echo "=========================================="
+                    echo "Python dependencies installed."
                 '''
             }
         }
 
 
         // =========================================================
-        // 5. LINT
+        // 4. LINT
         // =========================================================
 
         stage('Lint') {
@@ -216,7 +175,7 @@ pipeline {
                     set -e
 
                     echo "=========================================="
-                    echo "RUNNING LINT"
+                    echo "PYTHON LINT"
                     echo "=========================================="
 
                     . .venv/bin/activate
@@ -224,20 +183,18 @@ pipeline {
                     pip install flake8
 
                     flake8 . \
-                        --exclude=.venv,venv,env,.git,\
-__pycache__,.pytest_cache \
+                        --exclude=.venv,venv,env,.git,__pycache__,.pytest_cache \
                         --max-line-length=88
 
                     echo ""
-                    echo "Lint passed."
-                    echo "=========================================="
+                    echo "Lint completed successfully."
                 '''
             }
         }
 
 
         // =========================================================
-        // 6. UNIT TEST
+        // 5. UNIT TEST
         // =========================================================
 
         stage('Unit Test') {
@@ -248,7 +205,7 @@ __pycache__,.pytest_cache \
                     set -e
 
                     echo "=========================================="
-                    echo "RUNNING UNIT TESTS"
+                    echo "PYTHON UNIT TEST"
                     echo "=========================================="
 
                     . .venv/bin/activate
@@ -270,30 +227,24 @@ __pycache__,.pytest_cache \
 
                     echo ""
                     echo "Unit test stage completed."
-                    echo "=========================================="
                 '''
             }
         }
 
 
         // =========================================================
-        // 7. SONARQUBE
+        // 6. SONARQUBE
         // =========================================================
 
         stage('SonarQube Analysis') {
 
             steps {
 
-                echo '=========================================='
-                echo 'SONARQUBE ANALYSIS'
-                echo '=========================================='
-
                 script {
 
                     def sonarInstalled = sh(
                         script: '''
-                            command -v sonar-scanner \
-                            >/dev/null 2>&1
+                            command -v sonar-scanner >/dev/null 2>&1
                         ''',
                         returnStatus: true
                     )
@@ -314,19 +265,16 @@ __pycache__,.pytest_cache \
                     } else {
 
                         echo ''
-                        echo 'WARNING: sonar-scanner not installed.'
+                        echo 'WARNING: sonar-scanner is not installed.'
                         echo 'Skipping SonarQube analysis.'
-
                     }
                 }
-
-                echo '=========================================='
             }
         }
 
 
         // =========================================================
-        // 8. TRIVY FILESYSTEM SCAN
+        // 7. TRIVY FILESYSTEM SCAN
         // =========================================================
 
         stage('Trivy Filesystem Scan') {
@@ -356,142 +304,12 @@ __pycache__,.pytest_cache \
 
 
         // =========================================================
-        // 9. DOCKER CLEANUP
+        // 8. TRIVY EXISTING ECR IMAGE SCAN
         // =========================================================
 
-        stage('Docker Cleanup') {
+        stage('Trivy ECR Image Scan') {
 
             steps {
-
-                sh '''
-                    set +e
-
-                    echo "=========================================="
-                    echo "DOCKER CLEANUP"
-                    echo "=========================================="
-
-                    docker container prune -f
-                    docker image prune -af
-                    docker builder prune -af
-
-                    echo ""
-                    echo "Docker cleanup completed."
-
-                    exit 0
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 10. BUILD DOCKER IMAGE
-        // =========================================================
-
-        stage('Build Docker Image') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "BUILDING DOCKER IMAGE"
-                    echo "=========================================="
-
-                    if [ ! -f Dockerfile ]
-                    then
-
-                        echo "ERROR: Dockerfile not found."
-                        exit 1
-
-                    fi
-
-                    echo ""
-                    echo "Image:"
-                    echo "${IMAGE_NAME}:${IMAGE_TAG}"
-
-                    docker build \
-                        --pull \
-                        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-                        .
-
-                    echo ""
-                    echo "Docker image built successfully."
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 11. TAG DOCKER IMAGE
-        // =========================================================
-
-        stage('Tag Docker Image') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "TAGGING DOCKER IMAGE"
-                    echo "=========================================="
-
-                    docker tag \
-                        "${IMAGE_NAME}:${IMAGE_TAG}" \
-                        "${FULL_IMAGE}"
-
-                    echo ""
-                    echo "Image tagged as:"
-                    echo "${FULL_IMAGE}"
-
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 12. TRIVY IMAGE SCAN
-        // =========================================================
-
-        stage('Trivy Image Scan') {
-
-            steps {
-
-                sh '''
-                    set +e
-
-                    echo "=========================================="
-                    echo "TRIVY IMAGE SCAN"
-                    echo "=========================================="
-
-                    trivy image \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        "${IMAGE_NAME}:${IMAGE_TAG}"
-
-                    echo ""
-                    echo "Image scan completed."
-
-                    exit 0
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 13. AWS AUTHENTICATION
-        // =========================================================
-
-        stage('AWS Authentication') {
-
-            steps {
-
-                echo '=========================================='
-                echo 'AWS AUTHENTICATION'
-                echo '=========================================='
 
                 withCredentials([
                     usernamePassword(
@@ -502,19 +320,27 @@ __pycache__,.pytest_cache \
                 ]) {
 
                     sh '''
-                        set -e
+                        set +e
 
                         export AWS_DEFAULT_REGION="${AWS_REGION}"
 
-                        echo ""
-                        echo "Checking AWS credentials..."
-
-                        aws sts get-caller-identity
-
-                        echo ""
-                        echo "AWS authentication successful."
-
                         echo "=========================================="
+                        echo "TRIVY ECR IMAGE SCAN"
+                        echo "=========================================="
+
+                        echo ""
+                        echo "Existing ECR image:"
+                        echo "${ECR_IMAGE}"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 0 \
+                            "${ECR_IMAGE}"
+
+                        echo ""
+                        echo "ECR image scan completed."
+
+                        exit 0
                     '''
                 }
             }
@@ -522,10 +348,28 @@ __pycache__,.pytest_cache \
 
 
         // =========================================================
-        // 14. ECR LOGIN
+        // 9. EKS + LOAD BALANCER CONTROLLER + DEPLOYMENT
+        //
+        // This stage:
+        //
+        // 1. Creates kubeconfig
+        // 2. Checks OIDC
+        // 3. Checks IAM policy
+        // 4. Checks IAM ServiceAccount
+        // 5. Creates IAM ServiceAccount if required
+        // 6. Installs/upgrades AWS Load Balancer Controller
+        // 7. Deploys deployment.yml
+        // 8. Deploys service.yml
+        // 9. Deploys ingress.yml
+        //
+        // NO Docker build
+        // NO Docker Hub
+        // NO ECR login
+        // NO ECR push
+        // NO ECR tag
         // =========================================================
 
-        stage('ECR Login') {
+        stage('Kubernetes Deployment') {
 
             steps {
 
@@ -542,464 +386,303 @@ __pycache__,.pytest_cache \
 
                         export AWS_DEFAULT_REGION="${AWS_REGION}"
 
-                        echo "=========================================="
-                        echo "ECR LOGIN"
-                        echo "=========================================="
-
-                        aws ecr get-login-password \
-                            --region "${AWS_REGION}" \
-                        | docker login \
-                            --username AWS \
-                            --password-stdin \
-                            "${ECR_REGISTRY}"
-
-                        echo ""
-                        echo "ECR login successful."
-                        echo "=========================================="
-                    '''
-                }
-            }
-        }
-
-
-        // =========================================================
-        // 15. CHECK ECR REPOSITORY
-        // =========================================================
-
-        stage('Check ECR Repository') {
-
-            steps {
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-credentials',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-
-                    sh '''
-                        set -e
-
-                        export AWS_DEFAULT_REGION="${AWS_REGION}"
 
                         echo "=========================================="
-                        echo "CHECKING ECR REPOSITORY"
+                        echo "KUBERNETES DEPLOYMENT"
                         echo "=========================================="
 
-                        if aws ecr describe-repositories \
-                            --repository-names "${ECR_REPOSITORY}" \
-                            --region "${AWS_REGION}" \
-                            >/dev/null 2>&1
-                        then
 
-                            echo ""
-                            echo "ECR repository exists:"
-                            echo "${ECR_REPOSITORY}"
+                        # =================================================
+                        # KUBECONFIG
+                        # =================================================
 
-                        else
-
-                            echo ""
-                            echo "ECR repository not found."
-                            echo "Creating repository..."
-
-                            aws ecr create-repository \
-                                --repository-name "${ECR_REPOSITORY}" \
-                                --region "${AWS_REGION}"
-
-                            echo ""
-                            echo "ECR repository created."
-
-                        fi
-
-                        echo "=========================================="
-                    '''
-                }
-            }
-        }
-
-
-        // =========================================================
-        // 16. PUSH IMAGE TO ECR
-        // =========================================================
-
-        stage('Push Image to ECR') {
-
-            steps {
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-credentials',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-
-                    sh '''
-                        set -e
-
-                        export AWS_DEFAULT_REGION="${AWS_REGION}"
-
-                        echo "=========================================="
-                        echo "PUSHING IMAGE TO ECR"
-                        echo "=========================================="
-
-                        echo ""
-                        echo "Image:"
-                        echo "${FULL_IMAGE}"
-
-                        docker push "${FULL_IMAGE}"
-
-                        echo ""
-                        echo "Image pushed successfully."
-
-                        echo "=========================================="
-                    '''
-                }
-            }
-        }
-
-
-        // =========================================================
-        // 17. CONNECT TO EKS
-        // =========================================================
-
-        stage('Connect to EKS') {
-
-            steps {
-
-                echo '=========================================='
-                echo 'CONNECTING TO EKS'
-                echo '=========================================='
-
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-credentials',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-
-                    sh '''
-                        set -e
-
-                        export AWS_DEFAULT_REGION="${AWS_REGION}"
+                        rm -rf "${WORKSPACE}/.kube"
 
                         mkdir -p "${WORKSPACE}/.kube"
 
                         export KUBECONFIG="${WORKSPACE}/.kube/config"
 
-                        echo ""
-                        echo "EKS Cluster:"
-                        echo "${EKS_CLUSTER_NAME}"
+
+                        # =================================================
+                        # AWS IDENTITY
+                        # =================================================
 
                         echo ""
-                        echo "Updating kubeconfig..."
+                        echo "=========================================="
+                        echo "AWS IDENTITY"
+                        echo "=========================================="
+
+                        aws sts get-caller-identity
+
+
+                        # =================================================
+                        # EKS KUBECONFIG
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CONFIGURING EKS"
+                        echo "=========================================="
 
                         aws eks update-kubeconfig \
                             --region "${AWS_REGION}" \
                             --name "${EKS_CLUSTER_NAME}" \
                             --kubeconfig "${KUBECONFIG}"
 
+
+                        # =================================================
+                        # VERIFY CURRENT CONTEXT
+                        # =================================================
+
                         echo ""
-                        echo "Testing Kubernetes connection..."
+                        echo "Current Kubernetes context:"
 
-                        kubectl get nodes
+                        kubectl config current-context
+
+
+                        # =================================================
+                        # CHECK OIDC
+                        # =================================================
 
                         echo ""
-                        echo "EKS connection successful."
+                        echo "=========================================="
+                        echo "CHECKING EKS OIDC"
+                        echo "=========================================="
 
+                        OIDC_ISSUER=$(aws eks describe-cluster \
+                            --region "${AWS_REGION}" \
+                            --name "${EKS_CLUSTER_NAME}" \
+                            --query 'cluster.identity.oidc.issuer' \
+                            --output text)
+
+                        echo "OIDC issuer:"
+                        echo "${OIDC_ISSUER}"
+
+                        if [ -z "${OIDC_ISSUER}" ] || [ "${OIDC_ISSUER}" = "None" ]
+                        then
+                            echo "ERROR: OIDC provider not available."
+                            exit 1
+                        fi
+
+
+                        # =================================================
+                        # CHECK IAM POLICY
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CHECKING LOAD BALANCER IAM POLICY"
+                        echo "=========================================="
+
+                        if aws iam get-policy \
+                            --policy-arn "${LBC_POLICY_ARN}" \
+                            >/dev/null 2>&1
+                        then
+
+                            echo "IAM policy exists."
+
+                        else
+
+                            echo "ERROR: AWS Load Balancer Controller IAM policy not found."
+                            exit 1
+
+                        fi
+
+
+                        # =================================================
+                        # CHECK SERVICE ACCOUNT
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CHECKING IAM SERVICE ACCOUNT"
+                        echo "=========================================="
+
+                        if kubectl get serviceaccount \
+                            "${LBC_SERVICE_ACCOUNT}" \
+                            -n "${LBC_NAMESPACE}" \
+                            >/dev/null 2>&1
+                        then
+
+                            echo "ServiceAccount already exists."
+
+                        else
+
+                            echo "ServiceAccount does not exist."
+                            echo "Creating IAM ServiceAccount..."
+
+                            eksctl create iamserviceaccount \
+                                --cluster="${EKS_CLUSTER_NAME}" \
+                                --namespace="${LBC_NAMESPACE}" \
+                                --name="${LBC_SERVICE_ACCOUNT}" \
+                                --attach-policy-arn="${LBC_POLICY_ARN}" \
+                                --override-existing-serviceaccounts \
+                                --region="${AWS_REGION}" \
+                                --approve
+
+                        fi
+
+
+                        # =================================================
+                        # VERIFY SERVICE ACCOUNT
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "VERIFYING SERVICE ACCOUNT"
+                        echo "=========================================="
+
+                        kubectl get serviceaccount \
+                            "${LBC_SERVICE_ACCOUNT}" \
+                            -n "${LBC_NAMESPACE}" \
+                            -o yaml
+
+
+                        # =================================================
+                        # VERIFY IAM ROLE ANNOTATION
+                        # =================================================
+
+                        ROLE_ARN=$(kubectl get serviceaccount \
+                            "${LBC_SERVICE_ACCOUNT}" \
+                            -n "${LBC_NAMESPACE}" \
+                            -o jsonpath='{.metadata.annotations.eks\\.amazonaws\\.com/role-arn}')
+
+                        if [ -z "${ROLE_ARN}" ]
+                        then
+
+                            echo "ERROR: IAM role annotation not found."
+                            exit 1
+
+                        fi
+
+                        echo ""
+                        echo "IAM Role:"
+                        echo "${ROLE_ARN}"
+
+
+                        # =================================================
+                        # HELM REPOSITORY
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CONFIGURING HELM"
+                        echo "=========================================="
+
+                        helm repo add eks https://aws.github.io/eks-charts \
+                            2>/dev/null || true
+
+                        helm repo update
+
+
+                        # =================================================
+                        # AWS LOAD BALANCER CONTROLLER
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "AWS LOAD BALANCER CONTROLLER"
+                        echo "=========================================="
+
+                        helm upgrade --install \
+                            aws-load-balancer-controller \
+                            eks/aws-load-balancer-controller \
+                            --namespace "${LBC_NAMESPACE}" \
+                            --set clusterName="${EKS_CLUSTER_NAME}" \
+                            --set serviceAccount.create=false \
+                            --set serviceAccount.name="${LBC_SERVICE_ACCOUNT}" \
+                            --set region="${AWS_REGION}" \
+                            --set vpcId="${VPC_ID}"
+
+
+                        # =================================================
+                        # WAIT FOR CONTROLLER
+                        # =================================================
+
+                        echo ""
+                        echo "Waiting for AWS Load Balancer Controller..."
+
+                        kubectl rollout status \
+                            deployment/aws-load-balancer-controller \
+                            -n "${LBC_NAMESPACE}" \
+                            --timeout=180s
+
+
+                        # =================================================
+                        # DEPLOY deployment.yml
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "DEPLOYMENT.YML"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            -f k8s/deployment.yml \
+                            -n "${K8S_NAMESPACE}"
+
+
+                        # =================================================
+                        # DEPLOY service.yml
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "SERVICE.YML"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            -f k8s/service.yml \
+                            -n "${K8S_NAMESPACE}"
+
+
+                        # =================================================
+                        # DEPLOY ingress.yml
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "INGRESS.YML"
+                        echo "=========================================="
+
+                        kubectl apply \
+                            -f k8s/ingress.yml \
+                            -n "${K8S_NAMESPACE}"
+
+
+                        # =================================================
+                        # COMPLETE
+                        # =================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "KUBERNETES DEPLOYMENT COMPLETED"
+                        echo "=========================================="
+
+                        echo ""
+                        echo "Deployment:"
+                        echo "  k8s/deployment.yml"
+
+                        echo ""
+                        echo "Service:"
+                        echo "  k8s/service.yml"
+
+                        echo ""
+                        echo "Ingress:"
+                        echo "  k8s/ingress.yml"
+
+                        echo ""
+                        echo "ECR Image:"
+                        echo "  ${ECR_IMAGE}"
+
+                        echo ""
+                        echo "EKS Cluster:"
+                        echo "  ${EKS_CLUSTER_NAME}"
+
+                        echo ""
                         echo "=========================================="
                     '''
                 }
-            }
-        }
-
-
-        // =========================================================
-        // 18. CHECK KUBERNETES YML FILES
-        // =========================================================
-
-        stage('Check Kubernetes YML') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "CHECKING KUBERNETES YML FILES"
-                    echo "=========================================="
-
-                    echo ""
-                    echo "Checking:"
-                    echo "k8s/deployment.yml"
-                    echo "k8s/service.yml"
-                    echo "k8s/ingress.yml"
-
-                    if [ ! -f k8s/deployment.yml ]
-                    then
-
-                        echo ""
-                        echo "ERROR: k8s/deployment.yml not found."
-                        exit 1
-
-                    fi
-
-                    if [ ! -f k8s/service.yml ]
-                    then
-
-                        echo ""
-                        echo "ERROR: k8s/service.yml not found."
-                        exit 1
-
-                    fi
-
-                    if [ ! -f k8s/ingress.yml ]
-                    then
-
-                        echo ""
-                        echo "ERROR: k8s/ingress.yml not found."
-                        exit 1
-
-                    fi
-
-                    echo ""
-                    echo "All Kubernetes YML files found."
-
-                    echo ""
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 19. VALIDATE DEPLOYMENT YML
-        // =========================================================
-
-        stage('Validate Kubernetes YML') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "VALIDATING KUBERNETES YML"
-                    echo "=========================================="
-
-                    export KUBECONFIG="${WORKSPACE}/.kube/config"
-
-                    kubectl apply \
-                        --dry-run=client \
-                        -f k8s/deployment.yml
-
-                    kubectl apply \
-                        --dry-run=client \
-                        -f k8s/service.yml
-
-                    kubectl apply \
-                        --dry-run=client \
-                        -f k8s/ingress.yml
-
-                    echo ""
-                    echo "Kubernetes YAML validation successful."
-
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 20. DEPLOY APPLICATION
-        // =========================================================
-
-        stage('Deploy Application') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "DEPLOYING APPLICATION"
-                    echo "=========================================="
-
-                    export KUBECONFIG="${WORKSPACE}/.kube/config"
-
-                    echo ""
-                    echo "Image:"
-                    echo "${FULL_IMAGE}"
-
-                    echo ""
-                    echo "Updating k8s/deployment.yml..."
-
-                    sed -i \
-                        "s|IMAGE_PLACEHOLDER|${FULL_IMAGE}|g" \
-                        k8s/deployment.yml
-
-                    echo ""
-                    echo "Applying deployment..."
-
-                    kubectl apply \
-                        -f k8s/deployment.yml \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo ""
-                    echo "Application deployment successful."
-
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 21. DEPLOY SERVICE
-        // =========================================================
-
-        stage('Deploy Service') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "DEPLOYING SERVICE"
-                    echo "=========================================="
-
-                    export KUBECONFIG="${WORKSPACE}/.kube/config"
-
-                    kubectl apply \
-                        -f k8s/service.yml \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo ""
-                    echo "Service deployed successfully."
-
-                    echo ""
-                    echo "Services:"
-
-                    kubectl get services \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 22. DEPLOY INGRESS
-        // =========================================================
-
-        stage('Deploy Ingress') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "DEPLOYING INGRESS"
-                    echo "=========================================="
-
-                    export KUBECONFIG="${WORKSPACE}/.kube/config"
-
-                    kubectl apply \
-                        -f k8s/ingress.yml \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo ""
-                    echo "Ingress deployed successfully."
-
-                    echo ""
-                    echo "Ingress:"
-
-                    kubectl get ingress \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo "=========================================="
-                '''
-            }
-        }
-
-
-        // =========================================================
-        // 23. VERIFY DEPLOYMENT
-        // =========================================================
-
-        stage('Verify Deployment') {
-
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "=========================================="
-                    echo "VERIFYING DEPLOYMENT"
-                    echo "=========================================="
-
-                    export KUBECONFIG="${WORKSPACE}/.kube/config"
-
-                    echo ""
-                    echo "Kubernetes Nodes:"
-                    kubectl get nodes
-
-                    echo ""
-                    echo "Deployments:"
-                    kubectl get deployments \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo ""
-                    echo "Pods:"
-                    kubectl get pods \
-                        -n "${K8S_NAMESPACE}" \
-                        -o wide
-
-                    echo ""
-                    echo "Services:"
-                    kubectl get services \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo ""
-                    echo "Ingress:"
-                    kubectl get ingress \
-                        -n "${K8S_NAMESPACE}"
-
-                    echo ""
-                    echo "Checking rollout..."
-
-                    DEPLOYMENT_NAME=$(kubectl get deployment \
-                        -n "${K8S_NAMESPACE}" \
-                        -o jsonpath='{.items[0].metadata.name}')
-
-                    if [ -z "${DEPLOYMENT_NAME}" ]
-                    then
-
-                        echo ""
-                        echo "ERROR: No deployment found."
-                        exit 1
-
-                    fi
-
-                    echo ""
-                    echo "Deployment:"
-                    echo "${DEPLOYMENT_NAME}"
-
-                    kubectl rollout status \
-                        deployment/"${DEPLOYMENT_NAME}" \
-                        -n "${K8S_NAMESPACE}" \
-                        --timeout=180s
-
-                    echo ""
-                    echo "=========================================="
-                    echo "DEPLOYMENT VERIFIED SUCCESSFULLY"
-                    echo "=========================================="
-                '''
             }
         }
     }
@@ -1018,13 +701,22 @@ __pycache__,.pytest_cache \
             echo '=========================================='
 
             echo ''
-            echo "ECR Repository: ${ECR_REPOSITORY}"
-            echo "Image Tag:      ${IMAGE_TAG}"
-            echo "Docker Image:   ${FULL_IMAGE}"
-            echo "EKS Cluster:    ${EKS_CLUSTER_NAME}"
-            echo "AWS Region:     ${AWS_REGION}"
+            echo "Existing ECR image:"
+            echo "${ECR_IMAGE}"
 
             echo ''
+            echo "EKS cluster:"
+            echo "${EKS_CLUSTER_NAME}"
+
+            echo ''
+            echo "Kubernetes resources:"
+            echo "  deployment.yml"
+            echo "  service.yml"
+            echo "  ingress.yml"
+
+            echo ''
+            echo 'Application deployment completed successfully.'
+
             echo '=========================================='
         }
 
@@ -1053,11 +745,9 @@ __pycache__,.pytest_cache \
                 set +e
 
                 rm -rf "${WORKSPACE}/.venv"
+                rm -rf "${WORKSPACE}/.kube"
                 rm -rf "${WORKSPACE}/.trivy-cache"
                 rm -rf "${WORKSPACE}/.trivy-image-cache"
-                rm -rf "${WORKSPACE}/.kube"
-
-                docker logout "${ECR_REGISTRY}" >/dev/null 2>&1
 
                 echo ""
                 echo "Cleanup completed."
@@ -1067,3 +757,4 @@ __pycache__,.pytest_cache \
         }
     }
 }
+```
