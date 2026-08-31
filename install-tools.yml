@@ -1,5 +1,4 @@
----
-- name: Install DevOps Tools
+name: Install DevOps Tools
   hosts: servers
   become: yes
 
@@ -38,6 +37,19 @@
     sonarqube_db_name: "sonarqube"
     sonarqube_db_user: "sonarqube"
     sonarqube_db_password: "sonarqube123"
+
+    # ==========================================
+    # KUBERNETES MONITORING / LOGGING
+    # ==========================================
+
+    monitoring_namespace: "monitoring"
+    logging_namespace: "logging"
+
+    prometheus_release: "kube-prometheus-stack"
+    grafana_release: "kube-prometheus-stack"
+    elasticsearch_release: "elasticsearch"
+    fluent_bit_release: "fluent-bit"
+    kibana_release: "kibana"
 
 
   tasks:
@@ -210,6 +222,213 @@
     - name: Check Helm version
       command: helm version --short
       register: helm_version
+      changed_when: false
+
+
+    # ==========================================
+    # KUBERNETES COLLECTIONS / PYTHON CLIENT
+    # ==========================================
+
+    - name: Install Ansible Kubernetes collection
+      command: ansible-galaxy collection install kubernetes.core
+      changed_when: false
+
+    - name: Install Python Kubernetes client
+      apt:
+        name:
+          - python3-kubernetes
+        state: present
+
+
+    # ==========================================
+    # HELM REPOSITORIES
+    # ==========================================
+
+    - name: Add Prometheus Community Helm repository
+      kubernetes.core.helm_repository:
+        name: prometheus-community
+        repo_url: https://prometheus-community.github.io/helm-charts
+
+    - name: Add Grafana Helm repository
+      kubernetes.core.helm_repository:
+        name: grafana
+        repo_url: https://grafana.github.io/helm-charts
+
+    - name: Add Elastic Helm repository
+      kubernetes.core.helm_repository:
+        name: elastic
+        repo_url: https://helm.elastic.co
+
+    - name: Add Fluent Helm repository
+      kubernetes.core.helm_repository:
+        name: fluent
+        repo_url: https://fluent.github.io/helm-charts
+
+
+    # ==========================================
+    # KUBERNETES NAMESPACES
+    # ==========================================
+
+    - name: Create monitoring namespace
+      kubernetes.core.k8s:
+        name: "{{ monitoring_namespace }}"
+        api_version: v1
+        kind: Namespace
+        state: present
+
+    - name: Create logging namespace
+      kubernetes.core.k8s:
+        name: "{{ logging_namespace }}"
+        api_version: v1
+        kind: Namespace
+        state: present
+
+
+    # ==========================================
+    # PROMETHEUS + GRAFANA + ALERTMANAGER
+    # ==========================================
+
+    - name: Install Prometheus Grafana Alertmanager stack
+      kubernetes.core.helm:
+        name: "{{ prometheus_release }}"
+        chart_ref: prometheus-community/kube-prometheus-stack
+        release_namespace: "{{ monitoring_namespace }}"
+        create_namespace: true
+        state: present
+        wait: true
+        timeout: 15m
+        values:
+          grafana:
+            enabled: true
+            adminUser: admin
+            adminPassword: "admin123"
+            service:
+              type: NodePort
+              nodePort: 30030
+          prometheus:
+            service:
+              type: NodePort
+              nodePort: 30090
+            prometheusSpec:
+              retention: 7d
+          alertmanager:
+            enabled: true
+            service:
+              type: NodePort
+              nodePort: 30093
+
+
+    # ==========================================
+    # ELASTICSEARCH
+    # ==========================================
+
+    - name: Install Elasticsearch
+      kubernetes.core.helm:
+        name: "{{ elasticsearch_release }}"
+        chart_ref: elastic/elasticsearch
+        release_namespace: "{{ logging_namespace }}"
+        create_namespace: true
+        state: present
+        wait: true
+        timeout: 15m
+        values:
+          replicas: 1
+          minimumMasterNodes: 1
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          volumeClaimTemplate:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 10Gi
+
+
+    # ==========================================
+    # FLUENT BIT
+    # ==========================================
+
+    - name: Install Fluent Bit
+      kubernetes.core.helm:
+        name: "{{ fluent_bit_release }}"
+        chart_ref: fluent/fluent-bit
+        release_namespace: "{{ logging_namespace }}"
+        create_namespace: true
+        state: present
+        wait: true
+        timeout: 10m
+        values:
+          serviceAccount:
+            create: true
+          daemonSetVolumes:
+            - name: varlog
+              hostPath:
+                path: /var/log
+            - name: varlibdockercontainers
+              hostPath:
+                path: /var/lib/docker/containers
+          daemonSetVolumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+
+
+    # ==========================================
+    # KIBANA
+    # ==========================================
+
+    - name: Install Kibana
+      kubernetes.core.helm:
+        name: "{{ kibana_release }}"
+        chart_ref: elastic/kibana
+        release_namespace: "{{ logging_namespace }}"
+        create_namespace: true
+        state: present
+        wait: true
+        timeout: 15m
+        values:
+          replicas: 1
+          service:
+            type: NodePort
+            nodePort: 30561
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+
+    # ==========================================
+    # VERIFY MONITORING / LOGGING
+    # ==========================================
+
+    - name: Check monitoring pods
+      command: kubectl get pods -n "{{ monitoring_namespace }}"
+      register: monitoring_pods
+      changed_when: false
+
+    - name: Check logging pods
+      command: kubectl get pods -n "{{ logging_namespace }}"
+      register: logging_pods
+      changed_when: false
+
+    - name: Check monitoring services
+      command: kubectl get svc -n "{{ monitoring_namespace }}"
+      register: monitoring_services
+      changed_when: false
+
+    - name: Check logging services
+      command: kubectl get svc -n "{{ logging_namespace }}"
+      register: logging_services
       changed_when: false
 
 
@@ -569,6 +788,37 @@
       register: sonarqube_final_status
 
       changed_when: false
+
+
+    # ==========================================
+    # MONITORING / LOGGING STATUS
+    # ==========================================
+
+    - name: Display monitoring status
+      debug:
+        msg:
+          - "Monitoring namespace: {{ monitoring_namespace }}"
+          - "Prometheus/Grafana/Alertmanager pods:"
+          - "{{ monitoring_pods.stdout }}"
+
+    - name: Display logging status
+      debug:
+        msg:
+          - "Logging namespace: {{ logging_namespace }}"
+          - "Elasticsearch/Fluent Bit/Kibana pods:"
+          - "{{ logging_pods.stdout }}"
+
+    - name: Display monitoring services
+      debug:
+        msg:
+          - "Monitoring services:"
+          - "{{ monitoring_services.stdout }}"
+
+    - name: Display logging services
+      debug:
+        msg:
+          - "Logging services:"
+          - "{{ logging_services.stdout }}"
 
 
     # ==========================================
