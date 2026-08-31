@@ -1,4 +1,4 @@
-name: Install DevOps Tools
+-name: Install DevOps Tools
   hosts: servers
   become: yes
 
