@@ -14,10 +14,11 @@
 
     aws_region: "ap-south-1"
     aws_account_id: "847547470089"
+
     eks_cluster_name: "devops-eks"
     kubeconfig_path: "/root/.kube/config"
 
-    # AWS credentials should come from Ansible Vault
+    # AWS credentials from Ansible Vault
     aws_access_key_id: "{{ vault_aws_access_key_id }}"
     aws_secret_access_key: "{{ vault_aws_secret_access_key }}"
 
@@ -51,9 +52,14 @@
 
     prometheus_release: "kube-prometheus-stack"
     grafana_release: "kube-prometheus-stack"
+
     elasticsearch_release: "elasticsearch"
     fluent_bit_release: "fluent-bit"
     kibana_release: "kibana"
+
+    # Existing StorageClass
+    elasticsearch_storage_class: "gp2"
+    elasticsearch_storage_size: "10Gi"
 
 
   tasks:
@@ -202,6 +208,7 @@
       args:
         creates: /usr/local/bin/eksctl
 
+
     - name: Check eksctl version
       command: eksctl version
       register: eksctl_version
@@ -215,11 +222,11 @@
     - name: Install Helm
       shell: |
         set -e
-
         curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       args:
         creates: /usr/local/bin/helm
+
 
     - name: Check Helm version
       command: helm version --short
@@ -366,24 +373,32 @@
         wait: true
         timeout: 15m
         kubeconfig: "{{ kubeconfig_path }}"
+
         values:
+
           grafana:
             enabled: true
+
             adminUser: admin
             adminPassword: "admin123"
+
             service:
               type: NodePort
               nodePort: 30030
 
           prometheus:
+
             service:
               type: NodePort
               nodePort: 30090
+
             prometheusSpec:
               retention: 7d
 
           alertmanager:
+
             enabled: true
+
             service:
               type: NodePort
               nodePort: 30093
@@ -403,24 +418,34 @@
         wait: true
         timeout: 15m
         kubeconfig: "{{ kubeconfig_path }}"
+
         values:
+
           replicas: 1
+
           minimumMasterNodes: 1
 
           resources:
+
             requests:
               cpu: "500m"
               memory: "1Gi"
+
             limits:
               cpu: "1"
               memory: "2Gi"
 
           volumeClaimTemplate:
+
             accessModes:
               - ReadWriteOnce
+
+            storageClassName: "{{ elasticsearch_storage_class }}"
+
             resources:
+
               requests:
-                storage: 10Gi
+                storage: "{{ elasticsearch_storage_size }}"
 
 
     # ==========================================
@@ -437,12 +462,14 @@
         wait: true
         timeout: 10m
         kubeconfig: "{{ kubeconfig_path }}"
+
         values:
 
           serviceAccount:
             create: true
 
           daemonSetVolumes:
+
             - name: varlog
               hostPath:
                 path: /var/log
@@ -452,6 +479,7 @@
                 path: /var/lib/docker/containers
 
           daemonSetVolumeMounts:
+
             - name: varlog
               mountPath: /var/log
 
@@ -474,7 +502,9 @@
         wait: true
         timeout: 15m
         kubeconfig: "{{ kubeconfig_path }}"
+
         values:
+
           replicas: 1
 
           service:
@@ -482,9 +512,11 @@
             nodePort: 30561
 
           resources:
+
             requests:
               cpu: "250m"
               memory: "512Mi"
+
             limits:
               cpu: "500m"
               memory: "1Gi"
@@ -578,7 +610,6 @@
     - name: Create Trivy keyring
       command:
         cmd: gpg --dearmor --yes -o /usr/share/keyrings/trivy.gpg /tmp/trivy-public.key
-
       args:
         creates: /usr/share/keyrings/trivy.gpg
 
@@ -896,6 +927,8 @@
           - "AWS Region: {{ aws_region }}"
           - "Kubeconfig: {{ kubeconfig_path }}"
           - "Application Directory: {{ app_directory }}"
+          - "Elasticsearch StorageClass: {{ elasticsearch_storage_class }}"
+          - "Elasticsearch Storage: {{ elasticsearch_storage_size }}"
           - "SonarQube URL: http://YOUR_EC2_PUBLIC_IP:9000"
           - "Python virtual environment created successfully"
           - "Trivy installed successfully"
