@@ -241,6 +241,38 @@
         state: present
         kubeconfig: "{{ kubeconfig_path }}"
 
+    - name: Install Prometheus Grafana Alertmanager stack
+      kubernetes.core.helm:
+        name: "{{ prometheus_release }}"
+        chart_ref: prometheus-community/kube-prometheus-stack
+        release_namespace: "{{ monitoring_namespace }}"
+        create_namespace: true
+        state: present
+        wait: true
+        timeout: 15m
+        kubeconfig: "{{ kubeconfig_path }}"
+        values:
+          grafana:
+            enabled: true
+            adminUser: admin
+            adminPassword: "admin123"
+            service:
+              type: NodePort
+              nodePort: 30030
+
+          prometheus:
+            service:
+              type: NodePort
+              nodePort: 30090
+            prometheusSpec:
+              retention: 7d
+
+          alertmanager:
+            enabled: true
+            service:
+              type: NodePort
+              nodePort: 30093
+
     - name: Check monitoring pods
       command: kubectl get pods -n "{{ monitoring_namespace }}"
       environment:
@@ -429,18 +461,9 @@
       register: venv_python_version
       changed_when: false
 
+    - name: Check Git
       command: git --version
       register: git_version
-      changed_when: false
-
-    - name: Check Python
-      command: python3 --version
-      register: python_version
-      changed_when: false
-
-    - name: Check Python Virtual Environment
-      command: "{{ app_directory }}/.venv/bin/python --version"
-      register: venv_python_version
       changed_when: false
 
     - name: Check Trivy
@@ -493,9 +516,10 @@
         url: http://localhost:9000/api/system/status
         method: GET
         status_code: 200
-
       register: sonarqube_final_status
       changed_when: false
+
+    - name: Display monitoring status
       debug:
         msg:
           - "Monitoring namespace: {{ monitoring_namespace }}"
