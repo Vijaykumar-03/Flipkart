@@ -1,4 +1,3 @@
-```groovy
 pipeline {
 
     agent any
@@ -11,57 +10,20 @@ pipeline {
 
     environment {
 
-        // =========================================================
-        // GITHUB
-        // =========================================================
-
         GIT_REPO   = 'https://github.com/Vijaykumar-03/Flipkart.git'
         GIT_BRANCH = 'main'
-
-
-        // =========================================================
-        // AWS
-        // =========================================================
-
         AWS_REGION = 'ap-south-1'
-
-
-        // =========================================================
-        // EXISTING ECR IMAGE
-        // =========================================================
-
         ECR_IMAGE = '847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1'
-
-
-        // =========================================================
-        // EKS
-        // =========================================================
 
         EKS_CLUSTER_NAME = 'devops-eks'
 
         VPC_ID = 'vpc-06219807031b348d2'
-
-
-        // =========================================================
-        // KUBERNETES
-        // =========================================================
-
         K8S_NAMESPACE = 'default'
-
-
-        // =========================================================
-        // AWS LOAD BALANCER CONTROLLER
-        // =========================================================
 
         LBC_NAMESPACE       = 'kube-system'
         LBC_SERVICE_ACCOUNT = 'aws-load-balancer-controller'
 
         LBC_POLICY_ARN = 'arn:aws:iam::847547470089:policy/AWSLoadBalancerControllerIAMPolicy'
-
-
-        // =========================================================
-        // SONARQUBE
-        // =========================================================
 
         SONAR_PROJECT_KEY  = 'flipkart'
         SONAR_PROJECT_NAME = 'Flipkart'
@@ -69,12 +31,6 @@ pipeline {
 
 
     stages {
-
-
-        // =========================================================
-        // 1. CHECKOUT
-        // =========================================================
-
         stage('Checkout') {
 
             steps {
@@ -94,11 +50,6 @@ pipeline {
                 echo 'Source code checkout completed.'
             }
         }
-
-
-        // =========================================================
-        // 2. PYTHON ENVIRONMENT
-        // =========================================================
 
         stage('Python Environment') {
 
@@ -127,11 +78,6 @@ pipeline {
                 '''
             }
         }
-
-
-        // =========================================================
-        // 3. INSTALL PYTHON DEPENDENCIES
-        // =========================================================
 
         stage('Install Python Dependencies') {
 
@@ -192,11 +138,6 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 5. UNIT TEST
-        // =========================================================
-
         stage('Unit Test') {
 
             steps {
@@ -230,11 +171,6 @@ pipeline {
                 '''
             }
         }
-
-
-        // =========================================================
-        // 6. SONARQUBE
-        // =========================================================
 
         stage('SonarQube Analysis') {
 
@@ -272,11 +208,6 @@ pipeline {
             }
         }
 
-
-        // =========================================================
-        // 7. TRIVY FILESYSTEM SCAN
-        // =========================================================
-
         stage('Trivy Filesystem Scan') {
 
             steps {
@@ -301,11 +232,6 @@ pipeline {
                 '''
             }
         }
-
-
-        // =========================================================
-        // 8. TRIVY EXISTING ECR IMAGE SCAN
-        // =========================================================
 
         stage('Trivy ECR Image Scan') {
 
@@ -347,28 +273,6 @@ pipeline {
         }
 
 
-        // =========================================================
-        // 9. EKS + LOAD BALANCER CONTROLLER + DEPLOYMENT
-        //
-        // This stage:
-        //
-        // 1. Creates kubeconfig
-        // 2. Checks OIDC
-        // 3. Checks IAM policy
-        // 4. Checks IAM ServiceAccount
-        // 5. Creates IAM ServiceAccount if required
-        // 6. Installs/upgrades AWS Load Balancer Controller
-        // 7. Deploys deployment.yml
-        // 8. Deploys service.yml
-        // 9. Deploys ingress.yml
-        //
-        // NO Docker build
-        // NO Docker Hub
-        // NO ECR login
-        // NO ECR push
-        // NO ECR tag
-        // =========================================================
-
         stage('Kubernetes Deployment') {
 
             steps {
@@ -391,21 +295,11 @@ pipeline {
                         echo "KUBERNETES DEPLOYMENT"
                         echo "=========================================="
 
-
-                        # =================================================
-                        # KUBECONFIG
-                        # =================================================
-
                         rm -rf "${WORKSPACE}/.kube"
 
                         mkdir -p "${WORKSPACE}/.kube"
 
                         export KUBECONFIG="${WORKSPACE}/.kube/config"
-
-
-                        # =================================================
-                        # AWS IDENTITY
-                        # =================================================
 
                         echo ""
                         echo "=========================================="
@@ -413,11 +307,6 @@ pipeline {
                         echo "=========================================="
 
                         aws sts get-caller-identity
-
-
-                        # =================================================
-                        # EKS KUBECONFIG
-                        # =================================================
 
                         echo ""
                         echo "=========================================="
@@ -429,20 +318,10 @@ pipeline {
                             --name "${EKS_CLUSTER_NAME}" \
                             --kubeconfig "${KUBECONFIG}"
 
-
-                        # =================================================
-                        # VERIFY CURRENT CONTEXT
-                        # =================================================
-
                         echo ""
                         echo "Current Kubernetes context:"
 
                         kubectl config current-context
-
-
-                        # =================================================
-                        # CHECK OIDC
-                        # =================================================
 
                         echo ""
                         echo "=========================================="
@@ -488,11 +367,6 @@ pipeline {
 
                         fi
 
-
-                        # =================================================
-                        # CHECK SERVICE ACCOUNT
-                        # =================================================
-
                         echo ""
                         echo "=========================================="
                         echo "CHECKING IAM SERVICE ACCOUNT"
@@ -522,11 +396,6 @@ pipeline {
 
                         fi
 
-
-                        # =================================================
-                        # VERIFY SERVICE ACCOUNT
-                        # =================================================
-
                         echo ""
                         echo "=========================================="
                         echo "VERIFYING SERVICE ACCOUNT"
@@ -536,11 +405,6 @@ pipeline {
                             "${LBC_SERVICE_ACCOUNT}" \
                             -n "${LBC_NAMESPACE}" \
                             -o yaml
-
-
-                        # =================================================
-                        # VERIFY IAM ROLE ANNOTATION
-                        # =================================================
 
                         ROLE_ARN=$(kubectl get serviceaccount \
                             "${LBC_SERVICE_ACCOUNT}" \
@@ -559,11 +423,6 @@ pipeline {
                         echo "IAM Role:"
                         echo "${ROLE_ARN}"
 
-
-                        # =================================================
-                        # HELM REPOSITORY
-                        # =================================================
-
                         echo ""
                         echo "=========================================="
                         echo "CONFIGURING HELM"
@@ -573,11 +432,6 @@ pipeline {
                             2>/dev/null || true
 
                         helm repo update
-
-
-                        # =================================================
-                        # AWS LOAD BALANCER CONTROLLER
-                        # =================================================
 
                         echo ""
                         echo "=========================================="
@@ -594,11 +448,6 @@ pipeline {
                             --set region="${AWS_REGION}" \
                             --set vpcId="${VPC_ID}"
 
-
-                        # =================================================
-                        # WAIT FOR CONTROLLER
-                        # =================================================
-
                         echo ""
                         echo "Waiting for AWS Load Balancer Controller..."
 
@@ -606,12 +455,6 @@ pipeline {
                             deployment/aws-load-balancer-controller \
                             -n "${LBC_NAMESPACE}" \
                             --timeout=180s
-
-
-                        # =================================================
-                        # DEPLOY deployment.yml
-                        # =================================================
-
                         echo ""
                         echo "=========================================="
                         echo "DEPLOYMENT.YML"
@@ -620,12 +463,6 @@ pipeline {
                         kubectl apply \
                             -f k8s/deployment.yml \
                             -n "${K8S_NAMESPACE}"
-
-
-                        # =================================================
-                        # DEPLOY service.yml
-                        # =================================================
-
                         echo ""
                         echo "=========================================="
                         echo "SERVICE.YML"
@@ -635,11 +472,6 @@ pipeline {
                             -f k8s/service.yml \
                             -n "${K8S_NAMESPACE}"
 
-
-                        # =================================================
-                        # DEPLOY ingress.yml
-                        # =================================================
-
                         echo ""
                         echo "=========================================="
                         echo "INGRESS.YML"
@@ -648,11 +480,6 @@ pipeline {
                         kubectl apply \
                             -f k8s/ingress.yml \
                             -n "${K8S_NAMESPACE}"
-
-
-                        # =================================================
-                        # COMPLETE
-                        # =================================================
 
                         echo ""
                         echo "=========================================="
@@ -686,11 +513,6 @@ pipeline {
             }
         }
     }
-
-
-    // =============================================================
-    // POST ACTIONS
-    // =============================================================
 
     post {
 
@@ -757,4 +579,3 @@ pipeline {
         }
     }
 }
-```
