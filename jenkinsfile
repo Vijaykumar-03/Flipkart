@@ -27,6 +27,13 @@ pipeline {
 
         SONAR_PROJECT_KEY  = 'flipkart'
         SONAR_PROJECT_NAME = 'Flipkart'
+
+        // Jenkins credential IDs
+        AWS_CREDENTIALS_ID   = 'aws-credentials'
+        SONAR_CREDENTIALS_ID = 'sonarqube-token'
+
+        // AWS Load Balancer Controller
+        LBC_ROLE_NAME = 'eksctl-devops-eks-addon-iamserviceaccount-kub-Role1-3RgpiWDHVFbC'
     }
 
 
@@ -188,14 +195,23 @@ pipeline {
                     if (sonarInstalled == 0) {
 
                         withSonarQubeEnv('SonarQube') {
+                            withCredentials([
+                                string(
+                                    credentialsId: "${SONAR_CREDENTIALS_ID}",
+                                    variable: 'SONAR_TOKEN'
+                                )
+                            ]) {
+                                sh '''
+                                    set -e
 
-                            sh """
-                                sonar-scanner \
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                                -Dsonar.projectName=${SONAR_PROJECT_NAME} \
-                                -Dsonar.sources=. \
-                                -Dsonar.exclusions=.venv/**,venv/**,env/**,.git/**,__pycache__/**,tests/**
-                            """
+                                    sonar-scanner \
+                                      -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
+                                      -Dsonar.projectName="${SONAR_PROJECT_NAME}" \
+                                      -Dsonar.sources=. \
+                                      -Dsonar.token="${SONAR_TOKEN}" \
+                                      -Dsonar.exclusions=.venv/**,venv/**,env/**,.git/**,__pycache__/**,tests/**
+                                '''
+                            }
                         }
 
                     } else {
@@ -203,6 +219,21 @@ pipeline {
                         echo ''
                         echo 'WARNING: sonar-scanner is not installed.'
                         echo 'Skipping SonarQube analysis.'
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Quality Gate') {
+            steps {
+                script {
+                    try {
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: true
+                        }
+                    } catch (Exception e) {
+                        echo "WARNING: SonarQube Quality Gate could not be evaluated: ${e.message}"
+                        echo "Ensure the SonarQube webhook is configured in Jenkins."
                     }
                 }
             }
@@ -325,6 +356,17 @@ pipeline {
 
                         echo ""
                         echo "=========================================="
+                        echo "VERIFYING EKS CONNECTION"
+                        echo "=========================================="
+
+                        kubectl --request-timeout=20s get nodes
+
+                        echo ""
+                        echo "EKS nodes:"
+                        kubectl get nodes -o wide
+
+                        echo ""
+                        echo "=========================================="
                         echo "CHECKING EKS OIDC"
                         echo "=========================================="
 
@@ -372,29 +414,58 @@ pipeline {
                         echo "CHECKING IAM SERVICE ACCOUNT"
                         echo "=========================================="
 
+                        ROLE_ARN=""
+
+                        # eksctl already has the IAM service account/CloudFormation
+                        # resource in this cluster. Reuse its role instead of trying
+                        # to create a duplicate CloudFormation stack.
+                        ROLE_ARN=$(eksctl get iamserviceaccount \
+                            --cluster="${EKS_CLUSTER_NAME}" \
+                            --region="${AWS_REGION}" \
+                            --output json 2>/dev/null \
+                            | python3 -c 'import json,sys; data=json.load(sys.stdin); rows=data if isinstance(data,list) else data.get("iamserviceaccounts",[]); print(next((x.get("roleARN","") for x in rows if x.get("namespace")=="kube-system" and x.get("name")=="aws-load-balancer-controller"),""))' \
+                            2>/dev/null || true)
+
+                        if [ -z "${ROLE_ARN}" ]; then
+                            ROLE_ARN=$(aws iam get-role \
+                                --role-name "${LBC_ROLE_NAME}" \
+                                --query 'Role.Arn' \
+                                --output text 2>/dev/null || true)
+                        fi
+
+                        if [ -z "${ROLE_ARN}" ] || [ "${ROLE_ARN}" = "None" ]; then
+                            echo "ERROR: AWS Load Balancer Controller IAM role not found."
+                            echo "Expected role: ${LBC_ROLE_NAME}"
+                            exit 1
+                        fi
+
+                        echo "IAM role: ${ROLE_ARN}"
+
+                        echo ""
+                        echo "Checking Kubernetes ServiceAccount..."
+
                         if kubectl get serviceaccount \
                             "${LBC_SERVICE_ACCOUNT}" \
                             -n "${LBC_NAMESPACE}" \
                             >/dev/null 2>&1
                         then
-
                             echo "ServiceAccount already exists."
-
                         else
+                            echo "ServiceAccount does not exist. Creating it..."
 
-                            echo "ServiceAccount does not exist."
-                            echo "Creating IAM ServiceAccount..."
-
-                            eksctl create iamserviceaccount \
-                                --cluster="${EKS_CLUSTER_NAME}" \
-                                --namespace="${LBC_NAMESPACE}" \
-                                --name="${LBC_SERVICE_ACCOUNT}" \
-                                --attach-policy-arn="${LBC_POLICY_ARN}" \
-                                --override-existing-serviceaccounts \
-                                --region="${AWS_REGION}" \
-                                --approve
-
+                            kubectl create serviceaccount \
+                                "${LBC_SERVICE_ACCOUNT}" \
+                                -n "${LBC_NAMESPACE}"
                         fi
+
+                        echo ""
+                        echo "Applying IAM role annotation..."
+
+                        kubectl annotate serviceaccount \
+                            "${LBC_SERVICE_ACCOUNT}" \
+                            -n "${LBC_NAMESPACE}" \
+                            "eks.amazonaws.com/role-arn=${ROLE_ARN}" \
+                            --overwrite
 
                         echo ""
                         echo "=========================================="
@@ -406,22 +477,43 @@ pipeline {
                             -n "${LBC_NAMESPACE}" \
                             -o yaml
 
-                        ROLE_ARN=$(kubectl get serviceaccount \
+                        SA_ROLE_ARN=$(kubectl get serviceaccount \
                             "${LBC_SERVICE_ACCOUNT}" \
                             -n "${LBC_NAMESPACE}" \
-                            -o jsonpath='{.metadata.annotations.eks\\.amazonaws\\.com/role-arn}')
+                            -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}')
 
-                        if [ -z "${ROLE_ARN}" ]
-                        then
-
+                        if [ -z "${SA_ROLE_ARN}" ]; then
                             echo "ERROR: IAM role annotation not found."
                             exit 1
+                        fi
 
+                        if [ "${SA_ROLE_ARN}" != "${ROLE_ARN}" ]; then
+                            echo "ERROR: ServiceAccount IAM role ARN does not match expected role."
+                            echo "Expected: ${ROLE_ARN}"
+                            echo "Actual:   ${SA_ROLE_ARN}"
+                            exit 1
+                        fi
+
+                        echo "ServiceAccount IAM annotation verified."
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CHECKING EKS INGRESS CLASS"
+                        echo "=========================================="
+
+                        if kubectl get ingressclass alb >/dev/null 2>&1; then
+                            echo "ALB IngressClass exists."
+                            kubectl get ingressclass alb
+                        else
+                            echo "WARNING: ALB IngressClass not found yet."
                         fi
 
                         echo ""
-                        echo "IAM Role:"
-                        echo "${ROLE_ARN}"
+                        echo "=========================================="
+                        echo "CHECKING LOAD BALANCER CONTROLLER CRDS"
+                        echo "=========================================="
+
+                        kubectl get crd | grep 'elbv2.k8s.aws' || true
 
                         echo ""
                         echo "=========================================="
@@ -446,7 +538,9 @@ pipeline {
                             --set serviceAccount.create=false \
                             --set serviceAccount.name="${LBC_SERVICE_ACCOUNT}" \
                             --set region="${AWS_REGION}" \
-                            --set vpcId="${VPC_ID}"
+                            --set vpcId="${VPC_ID}" \
+                            --wait \
+                            --timeout 10m
 
                         echo ""
                         echo "Waiting for AWS Load Balancer Controller..."
@@ -455,6 +549,32 @@ pipeline {
                             deployment/aws-load-balancer-controller \
                             -n "${LBC_NAMESPACE}" \
                             --timeout=180s
+
+                        echo ""
+                        echo "Controller deployment:"
+                        kubectl get deployment \
+                            aws-load-balancer-controller \
+                            -n "${LBC_NAMESPACE}" \
+                            -o wide
+
+                        echo ""
+                        echo "Controller pods:"
+                        kubectl get pods \
+                            -n "${LBC_NAMESPACE}" \
+                            -l app.kubernetes.io/name=aws-load-balancer-controller \
+                            -o wide
+
+                        echo ""
+                        echo "Controller logs:"
+                        kubectl logs \
+                            -n "${LBC_NAMESPACE}" \
+                            deployment/aws-load-balancer-controller \
+                            --tail=50
+
+                        echo ""
+                        echo "Helm release:"
+                        helm status aws-load-balancer-controller \
+                            -n "${LBC_NAMESPACE}" || true
                         echo ""
                         echo "=========================================="
                         echo "DEPLOYMENT.YML"
