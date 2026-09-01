@@ -7,45 +7,21 @@
     - secrets.yml
 
   vars:
-
-    # ==========================================
-    # AWS CONFIGURATION
-    # ==========================================
-
     aws_region: "ap-south-1"
     aws_account_id: "847547470089"
 
     eks_cluster_name: "devops-eks"
     kubeconfig_path: "/root/.kube/config"
-
-    # AWS credentials from Ansible Vault
     aws_access_key_id: "{{ vault_aws_access_key_id }}"
     aws_secret_access_key: "{{ vault_aws_secret_access_key }}"
-
-
-    # ==========================================
-    # GITHUB CONFIGURATION
-    # ==========================================
-
     github_repo: "https://github.com/Vijaykumar-03/Flipkart.git"
     app_directory: "/opt/Flipkart"
-
-
-    # ==========================================
-    # SONARQUBE CONFIGURATION
-    # ==========================================
-
     sonarqube_container: "sonarqube"
     sonarqube_db_container: "sonarqube-db"
 
     sonarqube_db_name: "sonarqube"
     sonarqube_db_user: "sonarqube"
     sonarqube_db_password: "sonarqube123"
-
-
-    # ==========================================
-    # KUBERNETES MONITORING / LOGGING
-    # ==========================================
 
     monitoring_namespace: "monitoring"
     logging_namespace: "logging"
@@ -56,27 +32,15 @@
     elasticsearch_release: "elasticsearch"
     fluent_bit_release: "fluent-bit"
     kibana_release: "kibana"
-
-    # Existing StorageClass
     elasticsearch_storage_class: "gp2"
     elasticsearch_storage_size: "10Gi"
 
 
   tasks:
-
-    # ==========================================
-    # UPDATE APT
-    # ==========================================
-
     - name: Update apt cache
       apt:
         update_cache: yes
-
-
-    # ==========================================
-    # BASIC PACKAGES
-    # ==========================================
-
+        
     - name: Install required packages
       apt:
         name:
@@ -93,11 +57,6 @@
           - fontconfig
         state: present
 
-
-    # ==========================================
-    # NGINX
-    # ==========================================
-
     - name: Install Nginx
       apt:
         name: nginx
@@ -108,11 +67,6 @@
         name: nginx
         state: started
         enabled: yes
-
-
-    # ==========================================
-    # DOCKER
-    # ==========================================
 
     - name: Create Docker keyring directory
       file:
@@ -152,11 +106,6 @@
         state: started
         enabled: yes
 
-
-    # ==========================================
-    # KUBECTL
-    # ==========================================
-
     - name: Download kubectl version
       get_url:
         url: https://dl.k8s.io/release/stable.txt
@@ -173,12 +122,6 @@
         url: "https://dl.k8s.io/release/{{ kubectl_version.stdout }}/bin/linux/amd64/kubectl"
         dest: /usr/local/bin/kubectl
         mode: '0755'
-
-
-    # ==========================================
-    # EKSCTL
-    # ==========================================
-
     - name: Install eksctl
       shell: |
         set -e
@@ -214,11 +157,6 @@
       register: eksctl_version
       changed_when: false
 
-
-    # ==========================================
-    # HELM
-    # ==========================================
-
     - name: Install Helm
       shell: |
         set -e
@@ -233,11 +171,6 @@
       register: helm_version
       changed_when: false
 
-
-    # ==========================================
-    # KUBERNETES COLLECTIONS / PYTHON CLIENT
-    # ==========================================
-
     - name: Install Ansible Kubernetes collection
       command: ansible-galaxy collection install kubernetes.core
       changed_when: false
@@ -248,11 +181,6 @@
           - python3-kubernetes
         state: present
 
-
-    # ==========================================
-    # AWS CLI CONFIGURATION
-    # ==========================================
-
     - name: Configure AWS CLI
       shell: |
         aws configure set aws_access_key_id "{{ aws_access_key_id }}"
@@ -261,12 +189,6 @@
         aws configure set output json
 
       no_log: true
-
-
-    # ==========================================
-    # VERIFY AWS
-    # ==========================================
-
     - name: Check AWS identity
       command: aws sts get-caller-identity
       register: aws_identity
@@ -275,11 +197,6 @@
     - name: Display AWS identity
       debug:
         var: aws_identity.stdout
-
-
-    # ==========================================
-    # EKS KUBECONFIG
-    # ==========================================
 
     - name: Create .kube directory
       ansible.builtin.file:
@@ -312,11 +229,6 @@
       ansible.builtin.debug:
         var: eks_nodes.stdout
 
-
-    # ==========================================
-    # HELM REPOSITORIES
-    # ==========================================
-
     - name: Add Prometheus Community Helm repository
       kubernetes.core.helm_repository:
         name: prometheus-community
@@ -336,12 +248,6 @@
       kubernetes.core.helm_repository:
         name: fluent
         repo_url: https://fluent.github.io/helm-charts
-
-
-    # ==========================================
-    # KUBERNETES NAMESPACES
-    # ==========================================
-
     - name: Create monitoring namespace
       kubernetes.core.k8s:
         name: "{{ monitoring_namespace }}"
@@ -357,11 +263,6 @@
         kind: Namespace
         state: present
         kubeconfig: "{{ kubeconfig_path }}"
-
-
-    # ==========================================
-    # PROMETHEUS + GRAFANA + ALERTMANAGER
-    # ==========================================
 
     - name: Install Prometheus Grafana Alertmanager stack
       kubernetes.core.helm:
@@ -403,11 +304,6 @@
               type: NodePort
               nodePort: 30093
 
-
-    # ==========================================
-    # ELASTICSEARCH
-    # ==========================================
-
     - name: Install Elasticsearch
       kubernetes.core.helm:
         name: "{{ elasticsearch_release }}"
@@ -447,11 +343,6 @@
               requests:
                 storage: "{{ elasticsearch_storage_size }}"
 
-
-    # ==========================================
-    # FLUENT BIT
-    # ==========================================
-
     - name: Install Fluent Bit
       kubernetes.core.helm:
         name: "{{ fluent_bit_release }}"
@@ -487,11 +378,6 @@
               mountPath: /var/lib/docker/containers
               readOnly: true
 
-
-    # ==========================================
-    # KIBANA
-    # ==========================================
-
     - name: Install Kibana
       kubernetes.core.helm:
         name: "{{ kibana_release }}"
@@ -521,11 +407,6 @@
               cpu: "500m"
               memory: "1Gi"
 
-
-    # ==========================================
-    # VERIFY MONITORING / LOGGING
-    # ==========================================
-
     - name: Check monitoring pods
       command: kubectl get pods -n "{{ monitoring_namespace }}"
       environment:
@@ -553,22 +434,10 @@
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: logging_services
       changed_when: false
-
-
-    # ==========================================
-    # JAVA
-    # ==========================================
-
     - name: Install Java 21
       apt:
         name: openjdk-21-jre
         state: present
-
-
-    # ==========================================
-    # JENKINS
-    # ==========================================
-
     - name: Add Jenkins GPG key
       get_url:
         url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
@@ -633,21 +502,10 @@
       register: trivy_version
       changed_when: false
 
-
-    # ==========================================
-    # SONARQUBE NETWORK
-    # ==========================================
-
     - name: Create SonarQube Docker network
       community.docker.docker_network:
         name: sonarqube-network
         state: present
-
-
-    # ==========================================
-    # SONARQUBE POSTGRESQL
-    # ==========================================
-
     - name: Create SonarQube PostgreSQL volume
       community.docker.docker_volume:
         name: sonarqube-postgresql
@@ -671,11 +529,6 @@
         networks:
           - name: sonarqube-network
 
-
-    # ==========================================
-    # SONARQUBE VOLUMES
-    # ==========================================
-
     - name: Create SonarQube data volume
       community.docker.docker_volume:
         name: sonarqube-data
@@ -690,11 +543,6 @@
       community.docker.docker_volume:
         name: sonarqube-logs
         state: present
-
-
-    # ==========================================
-    # SONARQUBE CONTAINER
-    # ==========================================
 
     - name: Start SonarQube
       community.docker.docker_container:
@@ -721,11 +569,6 @@
 
         memory: "2g"
 
-
-    # ==========================================
-    # WAIT FOR SONARQUBE
-    # ==========================================
-
     - name: Wait for SonarQube to start
       uri:
         url: http://localhost:9000/api/system/status
@@ -740,11 +583,6 @@
       retries: 30
       delay: 10
 
-
-    # ==========================================
-    # CLONE GITHUB PROJECT
-    # ==========================================
-
     - name: Remove old application directory
       file:
         path: "{{ app_directory }}"
@@ -755,44 +593,21 @@
         repo: "{{ github_repo }}"
         dest: "{{ app_directory }}"
         version: main
-
-
-    # ==========================================
-    # PYTHON VERSION
-    # ==========================================
-
     - name: Check Python version
       command: python3 --version
       register: python_version
       changed_when: false
-
-
-    # ==========================================
-    # PYTHON VIRTUAL ENVIRONMENT
-    # ==========================================
 
     - name: Create Python virtual environment
       command: python3 -m venv .venv
       args:
         chdir: "{{ app_directory }}"
         creates: "{{ app_directory }}/.venv/bin/activate"
-
-
-    # ==========================================
-    # VERIFY PYTHON VIRTUAL ENVIRONMENT
-    # ==========================================
-
     - name: Verify Python virtual environment
       command: "{{ app_directory }}/.venv/bin/python --version"
       register: venv_python_version
       changed_when: false
 
-
-    # ==========================================
-    # VERIFICATION
-    # ==========================================
-
-    - name: Check Git
       command: git --version
       register: git_version
       changed_when: false
@@ -860,13 +675,6 @@
 
       register: sonarqube_final_status
       changed_when: false
-
-
-    # ==========================================
-    # MONITORING / LOGGING STATUS
-    # ==========================================
-
-    - name: Display monitoring status
       debug:
         msg:
           - "Monitoring namespace: {{ monitoring_namespace }}"
@@ -891,11 +699,6 @@
         msg:
           - "Logging services:"
           - "{{ logging_services.stdout }}"
-
-
-    # ==========================================
-    # DISPLAY INSTALLED TOOLS
-    # ==========================================
 
     - name: Display installed tools
       debug:
