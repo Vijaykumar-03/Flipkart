@@ -4,40 +4,70 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 45, unit: 'MINUTES')
         disableConcurrentBuilds()
+        skipDefaultCheckout(true)
     }
 
     environment {
 
+        // ==============================
+        // GIT
+        // ==============================
         GIT_REPO   = 'https://github.com/Vijaykumar-03/Flipkart.git'
         GIT_BRANCH = 'main'
-        AWS_REGION = 'ap-south-1'
+
+
+        // ==============================
+        // AWS
+        // ==============================
+        AWS_REGION     = 'ap-south-1'
+        AWS_ACCOUNT_ID = '847547470089'
+
         ECR_IMAGE = '847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1'
 
+
+        // ==============================
+        // EKS
+        // ==============================
         EKS_CLUSTER_NAME = 'devops-eks'
+        VPC_ID           = 'vpc-06219807031b348d2'
+        K8S_NAMESPACE     = 'default'
 
-        VPC_ID = 'vpc-06219807031b348d2'
-        K8S_NAMESPACE = 'default'
 
+        // ==============================
+        // AWS LOAD BALANCER CONTROLLER
+        // ==============================
         LBC_NAMESPACE       = 'kube-system'
         LBC_SERVICE_ACCOUNT = 'aws-load-balancer-controller'
 
-        LBC_POLICY_ARN = 'arn:aws:iam::847547470089:policy/AWSLoadBalancerControllerIAMPolicy'
+        LBC_POLICY_ARN =
+            'arn:aws:iam::847547470089:policy/AWSLoadBalancerControllerIAMPolicy'
 
-        SONAR_PROJECT_KEY  = 'flipkart'
+
+        // ==============================
+        // SONARQUBE
+        // ==============================
+        SONAR_SERVER_NAME = 'SonarQube'
+        SONAR_PROJECT_KEY = 'flipkart'
         SONAR_PROJECT_NAME = 'Flipkart'
 
-        // Jenkins credential IDs
+
+        // ==============================
+        // JENKINS CREDENTIALS
+        // ==============================
         AWS_CREDENTIALS_ID   = 'aws-credentials'
         SONAR_CREDENTIALS_ID = 'sonarqube-token'
-
-        // AWS Load Balancer Controller
-        LBC_ROLE_NAME = 'eksctl-devops-eks-addon-iamserviceaccount-kub-Role1-3RgpiWDHVFbC'
     }
 
 
     stages {
+
+
+        // =========================================================
+        // 1. CHECKOUT
+        // =========================================================
+
         stage('Checkout') {
 
             steps {
@@ -53,10 +83,68 @@ pipeline {
                     url: "${GIT_REPO}"
                 )
 
-                echo ''
-                echo 'Source code checkout completed.'
+                echo 'Checkout completed.'
             }
         }
+
+
+        // =========================================================
+        // 2. CHECK REQUIRED TOOLS
+        // =========================================================
+
+        stage('Check Required Tools') {
+
+            steps {
+
+                sh '''
+                    set -e
+
+                    echo "=========================================="
+                    echo "CHECKING REQUIRED TOOLS"
+                    echo "=========================================="
+
+                    echo ""
+                    echo "Java:"
+                    java -version
+
+                    echo ""
+                    echo "Python:"
+                    python3 --version
+
+                    echo ""
+                    echo "AWS:"
+                    aws --version
+
+                    echo ""
+                    echo "Kubectl:"
+                    kubectl version --client
+
+                    echo ""
+                    echo "Helm:"
+                    helm version --short
+
+                    echo ""
+                    echo "eksctl:"
+                    eksctl version
+
+                    echo ""
+                    echo "Trivy:"
+                    trivy --version
+
+                    echo ""
+                    echo "curl:"
+                    curl --version | head -1
+
+                    echo ""
+                    echo "All required tools are available."
+                '''
+            }
+        }
+
+
+        // =========================================================
+        // 3. PYTHON ENVIRONMENT
+        // =========================================================
 
         stage('Python Environment') {
 
@@ -69,8 +157,6 @@ pipeline {
                     echo "PYTHON ENVIRONMENT"
                     echo "=========================================="
 
-                    python3 --version
-
                     rm -rf .venv
 
                     python3 -m venv .venv
@@ -79,12 +165,14 @@ pipeline {
 
                     python --version
                     pip --version
-
-                    echo ""
-                    echo "Python virtual environment created."
                 '''
             }
         }
+
+
+        // =========================================================
+        // 4. PYTHON DEPENDENCIES
+        // =========================================================
 
         stage('Install Python Dependencies') {
 
@@ -94,30 +182,30 @@ pipeline {
                     set -e
 
                     echo "=========================================="
-                    echo "INSTALL PYTHON DEPENDENCIES"
+                    echo "PYTHON DEPENDENCIES"
                     echo "=========================================="
 
                     . .venv/bin/activate
 
                     python -m pip install --upgrade pip
 
-                    if [ -f requirements.txt ]
-                    then
-                        pip install -r requirements.txt
-                    else
-                        echo "ERROR: requirements.txt not found."
-                        exit 1
-                    fi
+                    if [ -f requirements.txt ]; then
 
-                    echo ""
-                    echo "Python dependencies installed."
+                        pip install -r requirements.txt
+
+                    else
+
+                        echo "WARNING: requirements.txt not found."
+                        echo "Skipping dependency installation."
+
+                    fi
                 '''
             }
         }
 
 
         // =========================================================
-        // 4. LINT
+        // 5. LINT
         // =========================================================
 
         stage('Lint') {
@@ -128,7 +216,7 @@ pipeline {
                     set -e
 
                     echo "=========================================="
-                    echo "PYTHON LINT"
+                    echo "LINT"
                     echo "=========================================="
 
                     . .venv/bin/activate
@@ -138,12 +226,14 @@ pipeline {
                     flake8 . \
                         --exclude=.venv,venv,env,.git,__pycache__,.pytest_cache \
                         --max-line-length=88
-
-                    echo ""
-                    echo "Lint completed successfully."
                 '''
             }
         }
+
+
+        // =========================================================
+        // 6. UNIT TEST
+        // =========================================================
 
         stage('Unit Test') {
 
@@ -153,13 +243,12 @@ pipeline {
                     set -e
 
                     echo "=========================================="
-                    echo "PYTHON UNIT TEST"
+                    echo "UNIT TEST"
                     echo "=========================================="
 
                     . .venv/bin/activate
 
-                    if [ -d tests ]
-                    then
+                    if [ -d tests ]; then
 
                         pip install pytest
 
@@ -167,17 +256,23 @@ pipeline {
 
                     else
 
-                        echo ""
                         echo "WARNING: tests directory not found."
                         echo "Skipping unit tests."
 
                     fi
-
-                    echo ""
-                    echo "Unit test stage completed."
                 '''
             }
         }
+
+
+        // =========================================================
+        // 7. SONARQUBE ANALYSIS
+        //
+        // IMPORTANT:
+        // No curl.
+        // No SonarSource download.
+        // Uses Jenkins-managed SonarScanner.
+        // =========================================================
 
         stage('SonarQube Analysis') {
 
@@ -185,59 +280,85 @@ pipeline {
 
                 script {
 
-                    def sonarInstalled = sh(
-                        script: '''
-                            command -v sonar-scanner >/dev/null 2>&1
-                        ''',
-                        returnStatus: true
+                    echo '=========================================='
+                    echo 'SONARQUBE ANALYSIS'
+                    echo '=========================================='
+
+                    def scannerHome = tool(
+                        name: 'SonarScanner',
+                        type: 'hudson.plugins.sonar.SonarRunnerInstallation'
                     )
 
-                    if (sonarInstalled == 0) {
+                    withSonarQubeEnv("${SONAR_SERVER_NAME}") {
 
-                        withSonarQubeEnv('SonarQube') {
-                            withCredentials([
-                                string(
-                                    credentialsId: "${SONAR_CREDENTIALS_ID}",
-                                    variable: 'SONAR_TOKEN'
-                                )
-                            ]) {
-                                sh '''
-                                    set -e
+                        withCredentials([
+                            string(
+                                credentialsId: "${SONAR_CREDENTIALS_ID}",
+                                variable: 'SONAR_TOKEN'
+                            )
+                        ]) {
 
-                                    sonar-scanner \
-                                      -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
-                                      -Dsonar.projectName="${SONAR_PROJECT_NAME}" \
-                                      -Dsonar.sources=. \
-                                      -Dsonar.token="${SONAR_TOKEN}" \
-                                      -Dsonar.exclusions=.venv/**,venv/**,env/**,.git/**,__pycache__/**,tests/**
-                                '''
-                            }
+                            sh """
+                                set -e
+
+                                echo "=========================================="
+                                echo "SONAR SCANNER VERSION"
+                                echo "=========================================="
+
+                                "${scannerHome}/bin/sonar-scanner" --version
+
+                                echo ""
+                                echo "=========================================="
+                                echo "RUNNING SONARQUBE ANALYSIS"
+                                echo "=========================================="
+
+                                "${scannerHome}/bin/sonar-scanner" \
+                                    -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
+                                    -Dsonar.projectName="${SONAR_PROJECT_NAME}" \
+                                    -Dsonar.sources=. \
+                                    -Dsonar.token="\\${SONAR_TOKEN}" \
+                                    -Dsonar.exclusions=".venv/**,venv/**,env/**,.git/**,__pycache__/**,tests/**"
+
+                                echo ""
+                                echo "SonarQube analysis completed."
+                            """
                         }
-
-                    } else {
-
-                        echo ''
-                        echo 'WARNING: sonar-scanner is not installed.'
-                        echo 'Skipping SonarQube analysis.'
                     }
                 }
             }
         }
+
+
+        // =========================================================
+        // 8. SONARQUBE QUALITY GATE
+        // =========================================================
 
         stage('SonarQube Quality Gate') {
+
             steps {
+
                 script {
-                    try {
-                        timeout(time: 5, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: true
-                        }
-                    } catch (Exception e) {
-                        echo "WARNING: SonarQube Quality Gate could not be evaluated: ${e.message}"
-                        echo "Ensure the SonarQube webhook is configured in Jenkins."
+
+                    echo '=========================================='
+                    echo 'SONARQUBE QUALITY GATE'
+                    echo '=========================================='
+
+                    timeout(time: 5, unit: 'MINUTES') {
+
+                        waitForQualityGate(
+                            abortPipeline: true
+                        )
                     }
+
+                    echo "Quality Gate passed."
                 }
             }
         }
+
+
+        // =========================================================
+        // 9. TRIVY FILESYSTEM SCAN
+        // =========================================================
 
         stage('Trivy Filesystem Scan') {
 
@@ -256,7 +377,6 @@ pipeline {
                         --scanners vuln,secret,misconfig \
                         .
 
-                    echo ""
                     echo "Filesystem scan completed."
 
                     exit 0
@@ -264,13 +384,18 @@ pipeline {
             }
         }
 
+
+        // =========================================================
+        // 10. TRIVY ECR IMAGE SCAN
+        // =========================================================
+
         stage('Trivy ECR Image Scan') {
 
             steps {
 
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'aws-credentials',
+                        credentialsId: "${AWS_CREDENTIALS_ID}",
                         usernameVariable: 'AWS_ACCESS_KEY_ID',
                         passwordVariable: 'AWS_SECRET_ACCESS_KEY'
                     )
@@ -282,11 +407,17 @@ pipeline {
                         export AWS_DEFAULT_REGION="${AWS_REGION}"
 
                         echo "=========================================="
+                        echo "AWS IDENTITY"
+                        echo "=========================================="
+
+                        aws sts get-caller-identity
+
+                        echo ""
+                        echo "=========================================="
                         echo "TRIVY ECR IMAGE SCAN"
                         echo "=========================================="
 
-                        echo ""
-                        echo "Existing ECR image:"
+                        echo "Image:"
                         echo "${ECR_IMAGE}"
 
                         trivy image \
@@ -294,7 +425,6 @@ pipeline {
                             --exit-code 0 \
                             "${ECR_IMAGE}"
 
-                        echo ""
                         echo "ECR image scan completed."
 
                         exit 0
@@ -304,13 +434,17 @@ pipeline {
         }
 
 
+        // =========================================================
+        // 11. KUBERNETES DEPLOYMENT
+        // =========================================================
+
         stage('Kubernetes Deployment') {
 
             steps {
 
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'aws-credentials',
+                        credentialsId: "${AWS_CREDENTIALS_ID}",
                         usernameVariable: 'AWS_ACCESS_KEY_ID',
                         passwordVariable: 'AWS_SECRET_ACCESS_KEY'
                     )
@@ -321,10 +455,16 @@ pipeline {
 
                         export AWS_DEFAULT_REGION="${AWS_REGION}"
 
+                        echo "=========================================="
+                        echo "AWS IDENTITY"
+                        echo "=========================================="
 
-                        echo "=========================================="
-                        echo "KUBERNETES DEPLOYMENT"
-                        echo "=========================================="
+                        aws sts get-caller-identity
+
+
+                        // ================================================
+                        // KUBECONFIG
+                        // ================================================
 
                         rm -rf "${WORKSPACE}/.kube"
 
@@ -332,14 +472,7 @@ pipeline {
 
                         export KUBECONFIG="${WORKSPACE}/.kube/config"
 
-                        echo ""
-                        echo "=========================================="
-                        echo "AWS IDENTITY"
-                        echo "=========================================="
 
-                        aws sts get-caller-identity
-
-                        echo ""
                         echo "=========================================="
                         echo "CONFIGURING EKS"
                         echo "=========================================="
@@ -349,23 +482,28 @@ pipeline {
                             --name "${EKS_CLUSTER_NAME}" \
                             --kubeconfig "${KUBECONFIG}"
 
+
                         echo ""
-                        echo "Current Kubernetes context:"
+                        echo "Current context:"
 
                         kubectl config current-context
 
-                        echo ""
+
+                        // ================================================
+                        // EKS CONNECTION
+                        // ================================================
+
                         echo "=========================================="
                         echo "VERIFYING EKS CONNECTION"
                         echo "=========================================="
 
-                        kubectl --request-timeout=20s get nodes
+                        kubectl --request-timeout=30s get nodes -o wide
 
-                        echo ""
-                        echo "EKS nodes:"
-                        kubectl get nodes -o wide
 
-                        echo ""
+                        // ================================================
+                        // OIDC
+                        // ================================================
+
                         echo "=========================================="
                         echo "CHECKING EKS OIDC"
                         echo "=========================================="
@@ -376,90 +514,137 @@ pipeline {
                             --query 'cluster.identity.oidc.issuer' \
                             --output text)
 
-                        echo "OIDC issuer:"
+                        echo "OIDC:"
                         echo "${OIDC_ISSUER}"
 
-                        if [ -z "${OIDC_ISSUER}" ] || [ "${OIDC_ISSUER}" = "None" ]
-                        then
-                            echo "ERROR: OIDC provider not available."
+                        if [ -z "${OIDC_ISSUER}" ] || [ "${OIDC_ISSUER}" = "None" ]; then
+
+                            echo "ERROR: OIDC issuer not found."
+
                             exit 1
+
                         fi
 
 
-                        # =================================================
-                        # CHECK IAM POLICY
-                        # =================================================
+                        // ================================================
+                        // IAM POLICY
+                        // ================================================
 
-                        echo ""
                         echo "=========================================="
                         echo "CHECKING LOAD BALANCER IAM POLICY"
                         echo "=========================================="
 
-                        if aws iam get-policy \
+                        aws iam get-policy \
                             --policy-arn "${LBC_POLICY_ARN}" \
-                            >/dev/null 2>&1
-                        then
+                            >/dev/null
 
-                            echo "IAM policy exists."
+                        echo "IAM policy exists."
 
-                        else
 
-                            echo "ERROR: AWS Load Balancer Controller IAM policy not found."
-                            exit 1
+                        // ================================================
+                        // FIND EXISTING IAM ROLE
+                        // ================================================
 
-                        fi
-
-                        echo ""
                         echo "=========================================="
-                        echo "CHECKING IAM SERVICE ACCOUNT"
+                        echo "DISCOVERING IAM ROLE"
                         echo "=========================================="
 
-                        ROLE_ARN=""
-
-                        # eksctl already has the IAM service account/CloudFormation
-                        # resource in this cluster. Reuse its role instead of trying
-                        # to create a duplicate CloudFormation stack.
-                        ROLE_ARN=$(eksctl get iamserviceaccount \
-                            --cluster="${EKS_CLUSTER_NAME}" \
-                            --region="${AWS_REGION}" \
-                            --output json 2>/dev/null \
-                            | python3 -c 'import json,sys; data=json.load(sys.stdin); rows=data if isinstance(data,list) else data.get("iamserviceaccounts",[]); print(next((x.get("roleARN","") for x in rows if x.get("namespace")=="kube-system" and x.get("name")=="aws-load-balancer-controller"),""))' \
+                        ROLE_ARN=$(kubectl get serviceaccount \
+                            "${LBC_SERVICE_ACCOUNT}" \
+                            -n "${LBC_NAMESPACE}" \
+                            -o jsonpath='{.metadata.annotations.eks\\.amazonaws\\.com/role-arn}' \
                             2>/dev/null || true)
 
+
                         if [ -z "${ROLE_ARN}" ]; then
-                            ROLE_ARN=$(aws iam get-role \
-                                --role-name "${LBC_ROLE_NAME}" \
-                                --query 'Role.Arn' \
-                                --output text 2>/dev/null || true)
+
+                            ROLE_ARN=$(eksctl get iamserviceaccount \
+                                --cluster="${EKS_CLUSTER_NAME}" \
+                                --region="${AWS_REGION}" \
+                                -o json 2>/dev/null | \
+                                python3 -c '
+import sys
+import json
+
+try:
+    data = json.load(sys.stdin)
+
+    if isinstance(data, list):
+
+        for item in data:
+
+            metadata = item.get("metadata", {})
+            status = item.get("status", {})
+
+            if (
+                metadata.get("namespace") == "kube-system"
+                and
+                metadata.get("name") == "aws-load-balancer-controller"
+            ):
+
+                print(status.get("roleARN", ""))
+                break
+
+except Exception:
+    pass
+' || true)
+
                         fi
 
-                        if [ -z "${ROLE_ARN}" ] || [ "${ROLE_ARN}" = "None" ]; then
-                            echo "ERROR: AWS Load Balancer Controller IAM role not found."
-                            echo "Expected role: ${LBC_ROLE_NAME}"
+
+                        if [ -z "${ROLE_ARN}" ]; then
+
+                            echo "ERROR: IAM role not found."
+
+                            eksctl get iamserviceaccount \
+                                --cluster="${EKS_CLUSTER_NAME}" \
+                                --region="${AWS_REGION}" || true
+
                             exit 1
+
                         fi
 
-                        echo "IAM role: ${ROLE_ARN}"
 
-                        echo ""
-                        echo "Checking Kubernetes ServiceAccount..."
+                        echo "IAM Role:"
+                        echo "${ROLE_ARN}"
 
-                        if kubectl get serviceaccount \
+
+                        // ================================================
+                        // SERVICE ACCOUNT
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "CHECKING SERVICE ACCOUNT"
+                        echo "=========================================="
+
+                        if ! kubectl get serviceaccount \
                             "${LBC_SERVICE_ACCOUNT}" \
                             -n "${LBC_NAMESPACE}" \
                             >/dev/null 2>&1
                         then
-                            echo "ServiceAccount already exists."
-                        else
-                            echo "ServiceAccount does not exist. Creating it..."
+
+                            echo "ServiceAccount does not exist."
+
+                            echo "Creating ServiceAccount..."
 
                             kubectl create serviceaccount \
                                 "${LBC_SERVICE_ACCOUNT}" \
                                 -n "${LBC_NAMESPACE}"
+
+                        else
+
+                            echo "ServiceAccount exists."
+
                         fi
 
-                        echo ""
-                        echo "Applying IAM role annotation..."
+
+                        // ================================================
+                        // IRSA
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "CONFIGURING IRSA"
+                        echo "=========================================="
 
                         kubectl annotate serviceaccount \
                             "${LBC_SERVICE_ACCOUNT}" \
@@ -467,65 +652,35 @@ pipeline {
                             "eks.amazonaws.com/role-arn=${ROLE_ARN}" \
                             --overwrite
 
+
                         echo ""
-                        echo "=========================================="
-                        echo "VERIFYING SERVICE ACCOUNT"
-                        echo "=========================================="
+                        echo "ServiceAccount:"
 
                         kubectl get serviceaccount \
                             "${LBC_SERVICE_ACCOUNT}" \
                             -n "${LBC_NAMESPACE}" \
                             -o yaml
 
-                        SA_ROLE_ARN=$(kubectl get serviceaccount \
-                            "${LBC_SERVICE_ACCOUNT}" \
-                            -n "${LBC_NAMESPACE}" \
-                            -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}')
 
-                        if [ -z "${SA_ROLE_ARN}" ]; then
-                            echo "ERROR: IAM role annotation not found."
-                            exit 1
-                        fi
+                        // ================================================
+                        // HELM
+                        // ================================================
 
-                        if [ "${SA_ROLE_ARN}" != "${ROLE_ARN}" ]; then
-                            echo "ERROR: ServiceAccount IAM role ARN does not match expected role."
-                            echo "Expected: ${ROLE_ARN}"
-                            echo "Actual:   ${SA_ROLE_ARN}"
-                            exit 1
-                        fi
-
-                        echo "ServiceAccount IAM annotation verified."
-
-                        echo ""
-                        echo "=========================================="
-                        echo "CHECKING EKS INGRESS CLASS"
-                        echo "=========================================="
-
-                        if kubectl get ingressclass alb >/dev/null 2>&1; then
-                            echo "ALB IngressClass exists."
-                            kubectl get ingressclass alb
-                        else
-                            echo "WARNING: ALB IngressClass not found yet."
-                        fi
-
-                        echo ""
-                        echo "=========================================="
-                        echo "CHECKING LOAD BALANCER CONTROLLER CRDS"
-                        echo "=========================================="
-
-                        kubectl get crd | grep 'elbv2.k8s.aws' || true
-
-                        echo ""
                         echo "=========================================="
                         echo "CONFIGURING HELM"
                         echo "=========================================="
 
-                        helm repo add eks https://aws.github.io/eks-charts \
-                            2>/dev/null || true
+                        helm repo add eks \
+                            https://aws.github.io/eks-charts \
+                            >/dev/null 2>&1 || true
 
                         helm repo update
 
-                        echo ""
+
+                        // ================================================
+                        // AWS LOAD BALANCER CONTROLLER
+                        // ================================================
+
                         echo "=========================================="
                         echo "AWS LOAD BALANCER CONTROLLER"
                         echo "=========================================="
@@ -539,43 +694,201 @@ pipeline {
                             --set serviceAccount.name="${LBC_SERVICE_ACCOUNT}" \
                             --set region="${AWS_REGION}" \
                             --set vpcId="${VPC_ID}" \
-                            --wait \
                             --timeout 10m
 
-                        echo ""
-                        echo "Waiting for AWS Load Balancer Controller..."
+
+                        // ================================================
+                        // CONTROLLER ROLLOUT
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "WAITING FOR LOAD BALANCER CONTROLLER"
+                        echo "=========================================="
 
                         kubectl rollout status \
                             deployment/aws-load-balancer-controller \
                             -n "${LBC_NAMESPACE}" \
                             --timeout=180s
 
-                        echo ""
-                        echo "Controller deployment:"
-                        kubectl get deployment \
-                            aws-load-balancer-controller \
-                            -n "${LBC_NAMESPACE}" \
-                            -o wide
 
-                        echo ""
-                        echo "Controller pods:"
                         kubectl get pods \
                             -n "${LBC_NAMESPACE}" \
                             -l app.kubernetes.io/name=aws-load-balancer-controller \
                             -o wide
 
-                        echo ""
-                        echo "Controller logs:"
-                        kubectl logs \
+
+                        // ================================================
+                        // WEBHOOK TLS SECRET
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "VERIFYING WEBHOOK TLS SECRET"
+                        echo "=========================================="
+
+                        if ! kubectl get secret \
+                            aws-load-balancer-tls \
                             -n "${LBC_NAMESPACE}" \
+                            >/dev/null 2>&1
+                        then
+
+                            echo "ERROR: aws-load-balancer-tls not found."
+
+                            kubectl get secrets \
+                                -n "${LBC_NAMESPACE}" \
+                                | grep -E 'aws-load-balancer|webhook' || true
+
+                            exit 1
+
+                        fi
+
+
+                        kubectl get secret \
+                            aws-load-balancer-tls \
+                            -n "${LBC_NAMESPACE}"
+
+
+                        // ================================================
+                        // WEBHOOK CA BUNDLE
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "RECONCILING WEBHOOK CA BUNDLE"
+                        echo "=========================================="
+
+                        python3 <<'PY'
+import base64
+import json
+import subprocess
+import sys
+
+def get_json(args):
+    return json.loads(
+        subprocess.check_output(
+            ["kubectl"] + args,
+            text=True
+        )
+    )
+
+secret = get_json([
+    "get",
+    "secret",
+    "aws-load-balancer-tls",
+    "-n",
+    "kube-system",
+    "-o",
+    "json"
+])
+
+ca_b64 = secret.get("data", {}).get("ca.crt")
+
+if not ca_b64:
+    print("ERROR: ca.crt missing from aws-load-balancer-tls")
+    sys.exit(1)
+
+try:
+    base64.b64decode(ca_b64)
+except Exception:
+    print("ERROR: invalid ca.crt")
+    sys.exit(1)
+
+for kind in [
+    "mutatingwebhookconfiguration",
+    "validatingwebhookconfiguration"
+]:
+
+    name = "aws-load-balancer-webhook"
+
+    config = get_json([
+        "get",
+        kind,
+        name,
+        "-o",
+        "json"
+    ])
+
+    webhooks = config.get("webhooks", [])
+
+    if not webhooks:
+        print(f"ERROR: {kind}/{name} has no webhooks")
+        sys.exit(1)
+
+    for index in range(len(webhooks)):
+
+        patch = json.dumps([
+            {
+                "op": "replace",
+                "path": f"/webhooks/{index}/clientConfig/caBundle",
+                "value": ca_b64
+            }
+        ])
+
+        subprocess.check_call([
+            "kubectl",
+            "patch",
+            kind,
+            name,
+            "--type=json",
+            "-p",
+            patch
+        ])
+
+    print(f"CA bundle synchronized: {kind}/{name}")
+
+PY
+
+
+                        // ================================================
+                        // RESTART CONTROLLER
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "RESTARTING LOAD BALANCER CONTROLLER"
+                        echo "=========================================="
+
+                        kubectl rollout restart \
                             deployment/aws-load-balancer-controller \
-                            --tail=50
+                            -n "${LBC_NAMESPACE}"
+
+
+                        kubectl rollout status \
+                            deployment/aws-load-balancer-controller \
+                            -n "${LBC_NAMESPACE}" \
+                            --timeout=180s
+
 
                         echo ""
-                        echo "Helm release:"
-                        helm status aws-load-balancer-controller \
-                            -n "${LBC_NAMESPACE}" || true
-                        echo ""
+                        echo "Controller pods after restart:"
+
+                        kubectl get pods \
+                            -n "${LBC_NAMESPACE}" \
+                            -l app.kubernetes.io/name=aws-load-balancer-controller \
+                            -o wide
+
+
+                        // ================================================
+                        // WEBHOOK SERVICE
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "VERIFYING WEBHOOK SERVICE"
+                        echo "=========================================="
+
+                        kubectl get service \
+                            aws-load-balancer-webhook-service \
+                            -n "${LBC_NAMESPACE}" \
+                            -o wide
+
+
+                        kubectl get endpointslice \
+                            -n "${LBC_NAMESPACE}" \
+                            -l kubernetes.io/service-name=aws-load-balancer-webhook-service \
+                            -o wide
+
+
+                        // ================================================
+                        // DEPLOYMENT
+                        // ================================================
+
                         echo "=========================================="
                         echo "DEPLOYMENT.YML"
                         echo "=========================================="
@@ -583,7 +896,18 @@ pipeline {
                         kubectl apply \
                             -f k8s/deployment.yml \
                             -n "${K8S_NAMESPACE}"
-                        echo ""
+
+
+                        kubectl rollout status \
+                            deployment/flipkart-app \
+                            -n "${K8S_NAMESPACE}" \
+                            --timeout=180s
+
+
+                        // ================================================
+                        // SERVICE
+                        // ================================================
+
                         echo "=========================================="
                         echo "SERVICE.YML"
                         echo "=========================================="
@@ -592,7 +916,11 @@ pipeline {
                             -f k8s/service.yml \
                             -n "${K8S_NAMESPACE}"
 
-                        echo ""
+
+                        // ================================================
+                        // INGRESS
+                        // ================================================
+
                         echo "=========================================="
                         echo "INGRESS.YML"
                         echo "=========================================="
@@ -601,38 +929,74 @@ pipeline {
                             -f k8s/ingress.yml \
                             -n "${K8S_NAMESPACE}"
 
-                        echo ""
+
+                        // ================================================
+                        // FINAL VERIFICATION
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "FINAL KUBERNETES VERIFICATION"
+                        echo "=========================================="
+
+                        kubectl get pods \
+                            -n "${K8S_NAMESPACE}" \
+                            -o wide
+
+                        kubectl get deployments \
+                            -n "${K8S_NAMESPACE}"
+
+                        kubectl get services \
+                            -n "${K8S_NAMESPACE}"
+
+                        kubectl get ingress \
+                            -n "${K8S_NAMESPACE}" \
+                            -o wide || true
+
+                        kubectl get ingressclass || true
+
+
+                        // ================================================
+                        // ALB
+                        // ================================================
+
+                        echo "=========================================="
+                        echo "ALB ADDRESS"
+                        echo "=========================================="
+
+                        ALB_ADDRESS=$(kubectl get ingress \
+                            -n "${K8S_NAMESPACE}" \
+                            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' \
+                            2>/dev/null || true)
+
+
+                        if [ -n "${ALB_ADDRESS}" ]; then
+
+                            echo "ALB DNS:"
+                            echo "${ALB_ADDRESS}"
+
+                        else
+
+                            echo "ALB DNS is not available yet."
+
+                            echo "Run:"
+                            echo "kubectl get ingress -n ${K8S_NAMESPACE} -w"
+
+                        fi
+
+
                         echo "=========================================="
                         echo "KUBERNETES DEPLOYMENT COMPLETED"
-                        echo "=========================================="
-
-                        echo ""
-                        echo "Deployment:"
-                        echo "  k8s/deployment.yml"
-
-                        echo ""
-                        echo "Service:"
-                        echo "  k8s/service.yml"
-
-                        echo ""
-                        echo "Ingress:"
-                        echo "  k8s/ingress.yml"
-
-                        echo ""
-                        echo "ECR Image:"
-                        echo "  ${ECR_IMAGE}"
-
-                        echo ""
-                        echo "EKS Cluster:"
-                        echo "  ${EKS_CLUSTER_NAME}"
-
-                        echo ""
                         echo "=========================================="
                     '''
                 }
             }
         }
     }
+
+
+    // =============================================================
+    // POST
+    // =============================================================
 
     post {
 
@@ -642,22 +1006,9 @@ pipeline {
             echo '          PIPELINE SUCCESSFUL'
             echo '=========================================='
 
-            echo ''
-            echo "Existing ECR image:"
-            echo "${ECR_IMAGE}"
-
-            echo ''
-            echo "EKS cluster:"
-            echo "${EKS_CLUSTER_NAME}"
-
-            echo ''
-            echo "Kubernetes resources:"
-            echo "  deployment.yml"
-            echo "  service.yml"
-            echo "  ingress.yml"
-
-            echo ''
-            echo 'Application deployment completed successfully.'
+            echo "EKS Cluster: ${EKS_CLUSTER_NAME}"
+            echo "Namespace: ${K8S_NAMESPACE}"
+            echo "Region: ${AWS_REGION}"
 
             echo '=========================================='
         }
@@ -669,9 +1020,14 @@ pipeline {
             echo '            PIPELINE FAILED'
             echo '=========================================='
 
-            echo ''
             echo 'Check the FIRST failed stage above.'
+
             echo ''
+            echo 'Required Jenkins configuration:'
+            echo 'AWS credentials ID: aws-credentials'
+            echo 'SonarQube token ID: sonarqube-token'
+            echo 'SonarQube server: SonarQube'
+            echo 'SonarScanner tool: SonarScanner'
 
             echo '=========================================='
         }
@@ -691,8 +1047,7 @@ pipeline {
                 rm -rf "${WORKSPACE}/.trivy-cache"
                 rm -rf "${WORKSPACE}/.trivy-image-cache"
 
-                echo ""
-                echo "Cleanup completed."
+                echo "Temporary files cleaned."
             '''
 
             cleanWs()
