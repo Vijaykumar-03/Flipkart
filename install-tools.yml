@@ -28,6 +28,10 @@
     prometheus_release: "kube-prometheus-stack"
     grafana_release: "kube-prometheus-stack"
 
+    # EKS API access
+    eks_cluster_security_group: "sg-051f4bc1ea55218a2"
+    ec2_security_group: "sg-05df204b7b36f890e"
+
 
 
   tasks:
@@ -322,9 +326,75 @@
       ansible.builtin.debug:
         var: eks_update_status.stdout
 
+    # ==========================================
+    # EKS API SECURITY GROUP ACCESS
+    # ==========================================
+
+    - name: Allow EC2 security group to access EKS API on TCP 443
+      ansible.builtin.shell: |
+        aws ec2 authorize-security-group-ingress           --group-id "{{ eks_cluster_security_group }}"           --protocol tcp           --port 443           --source-group "{{ ec2_security_group }}"           --region "{{ aws_region }}"
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: eks_sg_rule
+      changed_when: eks_sg_rule.rc == 0
+      failed_when: >
+        eks_sg_rule.rc != 0 and
+        'InvalidPermission.Duplicate' not in (eks_sg_rule.stderr | default(''))
+
+    - name: Display EKS security group rule result
+      ansible.builtin.debug:
+        msg: "{{ eks_sg_rule.stdout | default('Rule already exists or was applied successfully') }}"
+
+    - name: Get EKS endpoint IP addresses
+      ansible.builtin.shell: |
+        ENDPOINT=$(aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.endpoint'           --output text)
+
+        HOST=$(echo "$ENDPOINT" | sed 's#https://##')
+        getent hosts "$HOST" | awk '{print $1}' | sort -u
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: eks_endpoint_ips
+      changed_when: false
+      failed_when: false
+
+    - name: Display EKS endpoint IP addresses
+      ansible.builtin.debug:
+        msg: "{{ eks_endpoint_ips.stdout_lines | default([]) }}"
+
+    - name: Test EKS API port 443 connectivity
+      ansible.builtin.shell: |
+        ENDPOINT=$(aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.endpoint'           --output text)
+
+        HOST=$(echo "$ENDPOINT" | sed 's#https://##')
+
+        if command -v nc >/dev/null 2>&1; then
+          while read -r IP; do
+            [ -z "$IP" ] && continue
+            nc -zvw 5 "$IP" 443
+          done < <(getent ahostsv4 "$HOST" | awk '{print $1}' | sort -u)
+        else
+          curl -vk --connect-timeout 10 "https://$HOST/healthz"
+        fi
+      register: eks_port_connectivity
+      changed_when: false
+      failed_when: false
+
+    - name: Display EKS API connectivity result
+      ansible.builtin.debug:
+        msg:
+          - "EKS API connectivity return code: {{ eks_port_connectivity.rc | default('N/A') }}"
+          - "{{ eks_port_connectivity.stdout | default('') }}"
+          - "{{ eks_port_connectivity.stderr | default('') }}"
+
     - name: Verify EKS connection
       ansible.builtin.command:
         cmd: kubectl --request-timeout=20s get nodes
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: eks_nodes
@@ -650,6 +720,9 @@
           - "EKS endpoint: {{ eks_endpoint.stdout }}"
           - "EKS DNS resolution: {{ eks_endpoint_dns.stdout | default('FAILED') }}"
           - "EKS API connectivity return code: {{ eks_api_connectivity.rc | default('N/A') }}"
+          - "EKS cluster security group: {{ eks_cluster_security_group }}"
+          - "EC2 security group: {{ ec2_security_group }}"
+          - "EKS port 443 test return code: {{ eks_port_connectivity.rc | default('N/A') }}"
 
     - name: Display installed tools
       debug:
