@@ -211,9 +211,120 @@
         AWS_DEFAULT_REGION: "{{ aws_region }}"
       no_log: true
 
+    # ==========================================
+    # EKS NETWORK / ENDPOINT VALIDATION
+    # ==========================================
+
+    - name: Get EKS endpoint configuration
+      ansible.builtin.shell: |
+        aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.resourcesVpcConfig.{vpc:vpcId,private:endpointPrivateAccess,public:endpointPublicAccess,cidrs:publicAccessCidrs,sg:clusterSecurityGroupId,subnets:subnetIds}'           --output json
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: eks_endpoint_config
+      changed_when: false
+
+    - name: Display EKS endpoint configuration
+      ansible.builtin.debug:
+        var: eks_endpoint_config.stdout
+
+    - name: Get EKS cluster status
+      ansible.builtin.shell: |
+        aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.status'           --output text
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: eks_cluster_status
+      changed_when: false
+
+    - name: Display EKS cluster status
+      ansible.builtin.debug:
+        msg: "EKS cluster status: {{ eks_cluster_status.stdout }}"
+
+    - name: Get EC2 instance ID from metadata
+      ansible.builtin.shell: |
+        TOKEN=$(curl -sS -X PUT           -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"           http://169.254.169.254/latest/api/token)
+
+        curl -sS           -H "X-aws-ec2-metadata-token: $TOKEN"           http://169.254.169.254/latest/meta-data/instance-id
+      register: ec2_instance_id
+      changed_when: false
+
+    - name: Display EC2 instance ID
+      ansible.builtin.debug:
+        msg: "EC2 instance ID: {{ ec2_instance_id.stdout }}"
+
+    - name: Get EC2 VPC subnet IP and security groups
+      ansible.builtin.shell: |
+        aws ec2 describe-instances           --instance-ids "{{ ec2_instance_id.stdout }}"           --region "{{ aws_region }}"           --query 'Reservations[0].Instances[0].{VpcId:VpcId,SubnetId:SubnetId,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[*].GroupId}'           --output json
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: ec2_network_config
+      changed_when: false
+
+    - name: Display EC2 network configuration
+      ansible.builtin.debug:
+        var: ec2_network_config.stdout
+
+    - name: Get EKS API endpoint
+      ansible.builtin.shell: |
+        aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.endpoint'           --output text
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: eks_endpoint
+      changed_when: false
+
+    - name: Resolve EKS API endpoint
+      ansible.builtin.shell: |
+        getent hosts "{{ eks_endpoint.stdout | regex_replace('^https://', '') }}"
+      register: eks_endpoint_dns
+      changed_when: false
+      failed_when: false
+
+    - name: Display EKS endpoint DNS resolution
+      ansible.builtin.debug:
+        msg: "{{ eks_endpoint_dns.stdout | default('DNS resolution failed') }}"
+
+    - name: Test EKS API endpoint HTTPS connectivity
+      ansible.builtin.shell: |
+        curl -vk --connect-timeout 10 "{{ eks_endpoint.stdout }}/healthz"
+      register: eks_api_connectivity
+      changed_when: false
+      failed_when: false
+
+    - name: Display EKS API connectivity result
+      ansible.builtin.debug:
+        msg: "{{ eks_api_connectivity.stderr | default('No connectivity output') }}"
+
+    - name: Check EKS endpoint update status
+      ansible.builtin.shell: |
+        UPDATE_ID=$(aws eks list-updates           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'updateIds[0]'           --output text)
+
+        if [ "$UPDATE_ID" != "None" ] && [ -n "$UPDATE_ID" ]; then
+          aws eks describe-update             --name "{{ eks_cluster_name }}"             --region "{{ aws_region }}"             --update-id "$UPDATE_ID"             --query 'update.{status:status,errors:errors}'             --output json
+        else
+          echo '{"status":"No recent update found","errors":[]}'
+        fi
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: eks_update_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display EKS endpoint update status
+      ansible.builtin.debug:
+        var: eks_update_status.stdout
+
     - name: Verify EKS connection
       ansible.builtin.command:
-        cmd: kubectl get nodes
+        cmd: kubectl --request-timeout=20s get nodes
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: eks_nodes
@@ -531,6 +642,14 @@
         msg:
           - "Monitoring services:"
           - "{{ monitoring_services.stdout }}"
+
+    - name: Display EKS network validation summary
+      ansible.builtin.debug:
+        msg:
+          - "EKS cluster status: {{ eks_cluster_status.stdout }}"
+          - "EKS endpoint: {{ eks_endpoint.stdout }}"
+          - "EKS DNS resolution: {{ eks_endpoint_dns.stdout | default('FAILED') }}"
+          - "EKS API connectivity return code: {{ eks_api_connectivity.rc | default('N/A') }}"
 
     - name: Display installed tools
       debug:
