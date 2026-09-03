@@ -1,4 +1,3 @@
----
 - name: Install DevOps Tools
   hosts: servers
   become: yes
@@ -29,16 +28,15 @@
     grafana_release: "kube-prometheus-stack"
 
     # EKS API access
-    eks_cluster_security_group: "sg-051f4bc1ea55218a2"
-    ec2_security_group: "sg-051f4bc1ea55218a2"
-
-
+    eks_cluster_security_group: "sg-0cea97d22308e3dd3"
+    ec2_security_group: "sg-05df204b7b36f890e"
 
   tasks:
+
     - name: Update apt cache
       apt:
         update_cache: yes
-        
+
     - name: Install required packages
       apt:
         name:
@@ -120,6 +118,7 @@
         url: "https://dl.k8s.io/release/{{ kubectl_version.stdout }}/bin/linux/amd64/kubectl"
         dest: /usr/local/bin/kubectl
         mode: '0755'
+
     - name: Install eksctl
       shell: |
         set -e
@@ -145,10 +144,8 @@
 
         rm -f /tmp/eksctl.tar.gz
         rm -f /tmp/eksctl
-
       args:
         creates: /usr/local/bin/eksctl
-
 
     - name: Check eksctl version
       command: eksctl version
@@ -159,10 +156,8 @@
       shell: |
         set -e
         curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
       args:
         creates: /usr/local/bin/helm
-
 
     - name: Check Helm version
       command: helm version --short
@@ -185,8 +180,8 @@
         aws configure set aws_secret_access_key "{{ aws_secret_access_key }}"
         aws configure set region "{{ aws_region }}"
         aws configure set output json
-
       no_log: true
+
     - name: Check AWS identity
       command: aws sts get-caller-identity
       register: aws_identity
@@ -221,7 +216,11 @@
 
     - name: Get EKS endpoint configuration
       ansible.builtin.shell: |
-        aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.resourcesVpcConfig.{vpc:vpcId,private:endpointPrivateAccess,public:endpointPublicAccess,cidrs:publicAccessCidrs,sg:clusterSecurityGroupId,subnets:subnetIds}'           --output json
+        aws eks describe-cluster \
+          --name "{{ eks_cluster_name }}" \
+          --region "{{ aws_region }}" \
+          --query 'cluster.resourcesVpcConfig.{vpc:vpcId,private:endpointPrivateAccess,public:endpointPublicAccess,cidrs:publicAccessCidrs,sg:clusterSecurityGroupId,subnets:subnetIds}' \
+          --output json
       environment:
         AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
@@ -235,7 +234,11 @@
 
     - name: Get EKS cluster status
       ansible.builtin.shell: |
-        aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.status'           --output text
+        aws eks describe-cluster \
+          --name "{{ eks_cluster_name }}" \
+          --region "{{ aws_region }}" \
+          --query 'cluster.status' \
+          --output text
       environment:
         AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
@@ -249,9 +252,13 @@
 
     - name: Get EC2 instance ID from metadata
       ansible.builtin.shell: |
-        TOKEN=$(curl -sS -X PUT           -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"           http://169.254.169.254/latest/api/token)
+        TOKEN=$(curl -sS -X PUT \
+          -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+          http://169.254.169.254/latest/api/token)
 
-        curl -sS           -H "X-aws-ec2-metadata-token: $TOKEN"           http://169.254.169.254/latest/meta-data/instance-id
+        curl -sS \
+          -H "X-aws-ec2-metadata-token: $TOKEN" \
+          http://169.254.169.254/latest/meta-data/instance-id
       register: ec2_instance_id
       changed_when: false
 
@@ -261,7 +268,11 @@
 
     - name: Get EC2 VPC subnet IP and security groups
       ansible.builtin.shell: |
-        aws ec2 describe-instances           --instance-ids "{{ ec2_instance_id.stdout }}"           --region "{{ aws_region }}"           --query 'Reservations[0].Instances[0].{VpcId:VpcId,SubnetId:SubnetId,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[*].GroupId}'           --output json
+        aws ec2 describe-instances \
+          --instance-ids "{{ ec2_instance_id.stdout }}" \
+          --region "{{ aws_region }}" \
+          --query 'Reservations[0].Instances[0].{VpcId:VpcId,SubnetId:SubnetId,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[*].GroupId}' \
+          --output json
       environment:
         AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
@@ -275,7 +286,11 @@
 
     - name: Get EKS API endpoint
       ansible.builtin.shell: |
-        aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.endpoint'           --output text
+        aws eks describe-cluster \
+          --name "{{ eks_cluster_name }}" \
+          --region "{{ aws_region }}" \
+          --query 'cluster.endpoint' \
+          --output text
       environment:
         AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
@@ -307,10 +322,19 @@
 
     - name: Check EKS endpoint update status
       ansible.builtin.shell: |
-        UPDATE_ID=$(aws eks list-updates           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'updateIds[0]'           --output text)
+        UPDATE_ID=$(aws eks list-updates \
+          --name "{{ eks_cluster_name }}" \
+          --region "{{ aws_region }}" \
+          --query 'updateIds[0]' \
+          --output text)
 
         if [ "$UPDATE_ID" != "None" ] && [ -n "$UPDATE_ID" ]; then
-          aws eks describe-update             --name "{{ eks_cluster_name }}"             --region "{{ aws_region }}"             --update-id "$UPDATE_ID"             --query 'update.{status:status,errors:errors}'             --output json
+          aws eks describe-update \
+            --name "{{ eks_cluster_name }}" \
+            --region "{{ aws_region }}" \
+            --update-id "$UPDATE_ID" \
+            --query 'update.{status:status,errors:errors}' \
+            --output json
         else
           echo '{"status":"No recent update found","errors":[]}'
         fi
@@ -332,7 +356,12 @@
 
     - name: Allow EC2 security group to access EKS API on TCP 443
       ansible.builtin.shell: |
-        aws ec2 authorize-security-group-ingress           --group-id "{{ eks_cluster_security_group }}"           --protocol tcp           --port 443           --source-group "{{ ec2_security_group }}"           --region "{{ aws_region }}"
+        aws ec2 authorize-security-group-ingress \
+          --group-id "{{ eks_cluster_security_group }}" \
+          --protocol tcp \
+          --port 443 \
+          --source-group "{{ ec2_security_group }}" \
+          --region "{{ aws_region }}"
       environment:
         AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
@@ -349,7 +378,11 @@
 
     - name: Get EKS endpoint IP addresses
       ansible.builtin.shell: |
-        ENDPOINT=$(aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.endpoint'           --output text)
+        ENDPOINT=$(aws eks describe-cluster \
+          --name "{{ eks_cluster_name }}" \
+          --region "{{ aws_region }}" \
+          --query 'cluster.endpoint' \
+          --output text)
 
         HOST=$(echo "$ENDPOINT" | sed 's#https://##')
         getent hosts "$HOST" | awk '{print $1}' | sort -u
@@ -367,7 +400,11 @@
 
     - name: Test EKS API port 443 connectivity
       ansible.builtin.shell: |
-        ENDPOINT=$(aws eks describe-cluster           --name "{{ eks_cluster_name }}"           --region "{{ aws_region }}"           --query 'cluster.endpoint'           --output text)
+        ENDPOINT=$(aws eks describe-cluster \
+          --name "{{ eks_cluster_name }}" \
+          --region "{{ aws_region }}" \
+          --query 'cluster.endpoint' \
+          --output text)
 
         HOST=$(echo "$ENDPOINT" | sed 's#https://##')
 
@@ -393,8 +430,6 @@
     - name: Verify EKS connection
       ansible.builtin.command:
         cmd: kubectl --request-timeout=20s get nodes
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: eks_nodes
@@ -472,6 +507,7 @@
       apt:
         name: openjdk-21-jre
         state: present
+
     - name: Add Jenkins GPG key
       get_url:
         url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
@@ -498,7 +534,6 @@
         name: jenkins
         state: started
         enabled: yes
-
 
     # ==========================================
     # TRIVY
@@ -540,6 +575,7 @@
       community.docker.docker_network:
         name: sonarqube-network
         state: present
+
     - name: Create SonarQube PostgreSQL volume
       community.docker.docker_volume:
         name: sonarqube-postgresql
@@ -608,12 +644,9 @@
         url: http://localhost:9000/api/system/status
         method: GET
         status_code: 200
-
       register: sonarqube_status
-
       until:
         - sonarqube_status.status == 200
-
       retries: 30
       delay: 10
 
@@ -627,6 +660,7 @@
         repo: "{{ github_repo }}"
         dest: "{{ app_directory }}"
         version: main
+
     - name: Check Python version
       command: python3 --version
       register: python_version
@@ -637,6 +671,7 @@
       args:
         chdir: "{{ app_directory }}"
         creates: "{{ app_directory }}/.venv/bin/activate"
+
     - name: Verify Python virtual environment
       command: "{{ app_directory }}/.venv/bin/python --version"
       register: venv_python_version
@@ -727,7 +762,6 @@
     - name: Display installed tools
       debug:
         msg:
-
           - "=========================================="
           - "DEVOPS TOOLS INSTALLATION COMPLETE"
           - "=========================================="
