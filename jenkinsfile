@@ -17,23 +17,27 @@ pipeline {
         GIT_REPO   = 'https://github.com/Vijaykumar-03/Flipkart.git'
         GIT_BRANCH = 'main'
 
-
         // ==============================
         // AWS
         // ==============================
         AWS_REGION     = 'ap-south-1'
         AWS_ACCOUNT_ID = '847547470089'
 
-        ECR_IMAGE = '847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1'
+        // ECR repository
+        ECR_REPOSITORY = 'devops-ecr'
 
+        // Required tag
+        IMAGE_TAG = 'v1'
+
+        // Complete image name
+        ECR_IMAGE = '847547470089.dkr.ecr.ap-south-1.amazonaws.com/devops-ecr:v1'
 
         // ==============================
         // EKS
         // ==============================
         EKS_CLUSTER_NAME = 'devops-eks'
-        VPC_ID           = 'vpc-06219807031b348d2'
+        VPC_ID            = 'vpc-06219807031b348d2'
         K8S_NAMESPACE     = 'default'
-
 
         // ==============================
         // AWS LOAD BALANCER CONTROLLER
@@ -44,14 +48,12 @@ pipeline {
         LBC_POLICY_ARN =
             'arn:aws:iam::847547470089:policy/AWSLoadBalancerControllerIAMPolicy'
 
-
         // ==============================
         // SONARQUBE
         // ==============================
-        SONAR_SERVER_NAME = 'SonarQube'
-        SONAR_PROJECT_KEY = 'flipkart'
+        SONAR_SERVER_NAME  = 'SonarQube'
+        SONAR_PROJECT_KEY  = 'flipkart'
         SONAR_PROJECT_NAME = 'Flipkart'
-
 
         // ==============================
         // JENKINS CREDENTIALS
@@ -62,7 +64,6 @@ pipeline {
 
 
     stages {
-
 
         // =========================================================
         // 1. CHECKOUT
@@ -126,6 +127,10 @@ pipeline {
                     echo ""
                     echo "eksctl:"
                     eksctl version
+
+                    echo ""
+                    echo "Docker:"
+                    docker --version
 
                     echo ""
                     echo "Trivy:"
@@ -267,11 +272,6 @@ pipeline {
 
         // =========================================================
         // 7. SONARQUBE ANALYSIS
-        //
-        // IMPORTANT:
-        // No curl.
-        // No SonarSource download.
-        // Uses Jenkins-managed SonarScanner.
         // =========================================================
 
         stage('SonarQube Analysis') {
@@ -377,6 +377,7 @@ pipeline {
                         --scanners vuln,secret,misconfig \
                         .
 
+                    echo ""
                     echo "Filesystem scan completed."
 
                     exit 0
@@ -386,7 +387,114 @@ pipeline {
 
 
         // =========================================================
-        // 10. TRIVY ECR IMAGE SCAN
+        // 10. BUILD AND PUSH DOCKER IMAGE
+        // =========================================================
+
+        stage('Build and Push Docker Image') {
+
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: "${AWS_CREDENTIALS_ID}",
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+
+                    sh '''
+                        set -e
+
+                        export AWS_DEFAULT_REGION="${AWS_REGION}"
+
+                        echo "=========================================="
+                        echo "AWS IDENTITY"
+                        echo "=========================================="
+
+                        aws sts get-caller-identity
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CHECKING DOCKER"
+                        echo "=========================================="
+
+                        docker version
+
+                        echo ""
+                        echo "Docker access is working."
+
+                        echo ""
+                        echo "=========================================="
+                        echo "ECR LOGIN"
+                        echo "=========================================="
+
+                        aws ecr get-login-password \
+                            --region "${AWS_REGION}" | \
+                        docker login \
+                            --username AWS \
+                            --password-stdin \
+                            "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                        echo ""
+                        echo "ECR login successful."
+
+                        echo ""
+                        echo "=========================================="
+                        echo "CHECKING ECR REPOSITORY"
+                        echo "=========================================="
+
+                        aws ecr describe-repositories \
+                            --repository-names "${ECR_REPOSITORY}" \
+                            --region "${AWS_REGION}" \
+                            >/dev/null
+
+                        echo "ECR repository exists: ${ECR_REPOSITORY}"
+
+                        echo ""
+                        echo "=========================================="
+                        echo "BUILDING DOCKER IMAGE"
+                        echo "=========================================="
+
+                        echo "Image:"
+                        echo "${ECR_IMAGE}"
+
+                        docker build \
+                            -t "${ECR_IMAGE}" \
+                            .
+
+                        echo ""
+                        echo "Docker image built successfully."
+
+                        echo ""
+                        echo "=========================================="
+                        echo "PUSHING IMAGE TO ECR"
+                        echo "=========================================="
+
+                        docker push "${ECR_IMAGE}"
+
+                        echo ""
+                        echo "Image pushed successfully."
+
+                        echo ""
+                        echo "=========================================="
+                        echo "VERIFYING ECR IMAGE"
+                        echo "=========================================="
+
+                        aws ecr describe-images \
+                            --repository-name "${ECR_REPOSITORY}" \
+                            --region "${AWS_REGION}" \
+                            --image-ids imageTag="${IMAGE_TAG}"
+
+                        echo ""
+                        echo "ECR image ${IMAGE_TAG} verified successfully."
+                    '''
+                }
+            }
+        }
+
+
+        // =========================================================
+        // 11. TRIVY ECR IMAGE SCAN
         // =========================================================
 
         stage('Trivy ECR Image Scan') {
@@ -402,7 +510,7 @@ pipeline {
                 ]) {
 
                     sh '''
-                        set +e
+                        set -e
 
                         export AWS_DEFAULT_REGION="${AWS_REGION}"
 
@@ -411,6 +519,38 @@ pipeline {
                         echo "=========================================="
 
                         aws sts get-caller-identity
+
+                        echo ""
+                        echo "=========================================="
+                        echo "DOCKER ACCESS"
+                        echo "=========================================="
+
+                        docker ps
+
+                        echo ""
+                        echo "=========================================="
+                        echo "ECR LOGIN"
+                        echo "=========================================="
+
+                        aws ecr get-login-password \
+                            --region "${AWS_REGION}" | \
+                        docker login \
+                            --username AWS \
+                            --password-stdin \
+                            "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                        echo ""
+                        echo "ECR login successful."
+
+                        echo ""
+                        echo "=========================================="
+                        echo "VERIFYING ECR IMAGE"
+                        echo "=========================================="
+
+                        aws ecr describe-images \
+                            --repository-name "${ECR_REPOSITORY}" \
+                            --region "${AWS_REGION}" \
+                            --image-ids imageTag="${IMAGE_TAG}"
 
                         echo ""
                         echo "=========================================="
@@ -425,9 +565,8 @@ pipeline {
                             --exit-code 0 \
                             "${ECR_IMAGE}"
 
-                        echo "ECR image scan completed."
-
-                        exit 0
+                        echo ""
+                        echo "ECR image scan completed successfully."
                     '''
                 }
             }
@@ -435,7 +574,7 @@ pipeline {
 
 
         // =========================================================
-        // 11. KUBERNETES DEPLOYMENT
+        // 12. KUBERNETES DEPLOYMENT
         // =========================================================
 
         stage('Kubernetes Deployment') {
@@ -462,9 +601,13 @@ pipeline {
                         aws sts get-caller-identity
 
 
-                        // ================================================
-                        // KUBECONFIG
-                        // ================================================
+                        # ================================================
+                        # KUBECONFIG
+                        # ================================================
+
+                        echo "=========================================="
+                        echo "CONFIGURING KUBECONFIG"
+                        echo "=========================================="
 
                         rm -rf "${WORKSPACE}/.kube"
 
@@ -472,16 +615,10 @@ pipeline {
 
                         export KUBECONFIG="${WORKSPACE}/.kube/config"
 
-
-                        echo "=========================================="
-                        echo "CONFIGURING EKS"
-                        echo "=========================================="
-
                         aws eks update-kubeconfig \
                             --region "${AWS_REGION}" \
                             --name "${EKS_CLUSTER_NAME}" \
                             --kubeconfig "${KUBECONFIG}"
-
 
                         echo ""
                         echo "Current context:"
@@ -489,10 +626,11 @@ pipeline {
                         kubectl config current-context
 
 
-                        // ================================================
-                        // EKS CONNECTION
-                        // ================================================
+                        # ================================================
+                        # EKS CONNECTION
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "VERIFYING EKS CONNECTION"
                         echo "=========================================="
@@ -500,10 +638,11 @@ pipeline {
                         kubectl --request-timeout=30s get nodes -o wide
 
 
-                        // ================================================
-                        // OIDC
-                        // ================================================
+                        # ================================================
+                        # OIDC
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "CHECKING EKS OIDC"
                         echo "=========================================="
@@ -526,10 +665,11 @@ pipeline {
                         fi
 
 
-                        // ================================================
-                        // IAM POLICY
-                        // ================================================
+                        # ================================================
+                        # IAM POLICY
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "CHECKING LOAD BALANCER IAM POLICY"
                         echo "=========================================="
@@ -541,10 +681,11 @@ pipeline {
                         echo "IAM policy exists."
 
 
-                        // ================================================
-                        // FIND EXISTING IAM ROLE
-                        // ================================================
+                        # ================================================
+                        # FIND EXISTING IAM ROLE
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "DISCOVERING IAM ROLE"
                         echo "=========================================="
@@ -609,10 +750,11 @@ except Exception:
                         echo "${ROLE_ARN}"
 
 
-                        // ================================================
-                        // SERVICE ACCOUNT
-                        // ================================================
+                        # ================================================
+                        # SERVICE ACCOUNT
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "CHECKING SERVICE ACCOUNT"
                         echo "=========================================="
@@ -638,10 +780,11 @@ except Exception:
                         fi
 
 
-                        // ================================================
-                        // IRSA
-                        // ================================================
+                        # ================================================
+                        # IRSA
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "CONFIGURING IRSA"
                         echo "=========================================="
@@ -662,10 +805,11 @@ except Exception:
                             -o yaml
 
 
-                        // ================================================
-                        // HELM
-                        // ================================================
+                        # ================================================
+                        # HELM
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "CONFIGURING HELM"
                         echo "=========================================="
@@ -677,10 +821,11 @@ except Exception:
                         helm repo update
 
 
-                        // ================================================
-                        // AWS LOAD BALANCER CONTROLLER
-                        // ================================================
+                        # ================================================
+                        # AWS LOAD BALANCER CONTROLLER
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "AWS LOAD BALANCER CONTROLLER"
                         echo "=========================================="
@@ -697,10 +842,11 @@ except Exception:
                             --timeout 10m
 
 
-                        // ================================================
-                        // CONTROLLER ROLLOUT
-                        // ================================================
+                        # ================================================
+                        # CONTROLLER ROLLOUT
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "WAITING FOR LOAD BALANCER CONTROLLER"
                         echo "=========================================="
@@ -717,10 +863,11 @@ except Exception:
                             -o wide
 
 
-                        // ================================================
-                        // WEBHOOK TLS SECRET
-                        // ================================================
+                        # ================================================
+                        # WEBHOOK TLS SECRET
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "VERIFYING WEBHOOK TLS SECRET"
                         echo "=========================================="
@@ -747,10 +894,11 @@ except Exception:
                             -n "${LBC_NAMESPACE}"
 
 
-                        // ================================================
-                        // WEBHOOK CA BUNDLE
-                        // ================================================
+                        # ================================================
+                        # WEBHOOK CA BUNDLE
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "RECONCILING WEBHOOK CA BUNDLE"
                         echo "=========================================="
@@ -837,10 +985,11 @@ for kind in [
 PY
 
 
-                        // ================================================
-                        // RESTART CONTROLLER
-                        // ================================================
+                        # ================================================
+                        # RESTART CONTROLLER
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "RESTARTING LOAD BALANCER CONTROLLER"
                         echo "=========================================="
@@ -865,10 +1014,11 @@ PY
                             -o wide
 
 
-                        // ================================================
-                        // WEBHOOK SERVICE
-                        // ================================================
+                        # ================================================
+                        # WEBHOOK SERVICE
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "VERIFYING WEBHOOK SERVICE"
                         echo "=========================================="
@@ -885,10 +1035,11 @@ PY
                             -o wide
 
 
-                        // ================================================
-                        // DEPLOYMENT
-                        // ================================================
+                        # ================================================
+                        # DEPLOYMENT
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "DEPLOYMENT.YML"
                         echo "=========================================="
@@ -904,10 +1055,11 @@ PY
                             --timeout=180s
 
 
-                        // ================================================
-                        // SERVICE
-                        // ================================================
+                        # ================================================
+                        # SERVICE
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "SERVICE.YML"
                         echo "=========================================="
@@ -917,10 +1069,11 @@ PY
                             -n "${K8S_NAMESPACE}"
 
 
-                        // ================================================
-                        // INGRESS
-                        // ================================================
+                        # ================================================
+                        # INGRESS
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "INGRESS.YML"
                         echo "=========================================="
@@ -930,10 +1083,11 @@ PY
                             -n "${K8S_NAMESPACE}"
 
 
-                        // ================================================
-                        // FINAL VERIFICATION
-                        // ================================================
+                        # ================================================
+                        # FINAL VERIFICATION
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "FINAL KUBERNETES VERIFICATION"
                         echo "=========================================="
@@ -955,10 +1109,11 @@ PY
                         kubectl get ingressclass || true
 
 
-                        // ================================================
-                        // ALB
-                        // ================================================
+                        # ================================================
+                        # ALB
+                        # ================================================
 
+                        echo ""
                         echo "=========================================="
                         echo "ALB ADDRESS"
                         echo "=========================================="
@@ -984,6 +1139,7 @@ PY
                         fi
 
 
+                        echo ""
                         echo "=========================================="
                         echo "KUBERNETES DEPLOYMENT COMPLETED"
                         echo "=========================================="
@@ -1009,6 +1165,7 @@ PY
             echo "EKS Cluster: ${EKS_CLUSTER_NAME}"
             echo "Namespace: ${K8S_NAMESPACE}"
             echo "Region: ${AWS_REGION}"
+            echo "ECR Image: ${ECR_IMAGE}"
 
             echo '=========================================='
         }
