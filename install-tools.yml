@@ -30,7 +30,7 @@
 
     # EKS API access
     eks_cluster_security_group: "sg-051f4bc1ea55218a2"
-    ec2_security_group: "sg-05df204b7b36f890e"
+    ec2_security_group: "sg-051f4bc1ea55218a2"
 
 
 
