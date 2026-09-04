@@ -986,6 +986,60 @@ PY
 
 
                         # ================================================
+                        # VERIFY EKS OIDC / IRSA CONFIGURATION
+                        # ================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "VERIFYING EKS OIDC / IRSA"
+                        echo "=========================================="
+
+                        OIDC_ISSUER=$(aws eks describe-cluster \
+                            --region "${AWS_REGION}" \
+                            --name "${EKS_CLUSTER_NAME}" \
+                            --query 'cluster.identity.oidc.issuer' \
+                            --output text)
+
+                        OIDC_PROVIDER=$(echo "${OIDC_ISSUER}" | sed 's#https://##')
+
+                        echo "EKS OIDC Issuer:"
+                        echo "${OIDC_ISSUER}"
+
+                        ROLE_NAME=$(echo "${ROLE_ARN}" | awk -F/ '{print $NF}')
+
+                        echo "IAM Role:"
+                        echo "${ROLE_NAME}"
+
+                        echo ""
+                        echo "IAM Role Trust Policy:"
+                        aws iam get-role \
+                            --role-name "${ROLE_NAME}" \
+                            --query 'Role.AssumeRolePolicyDocument' \
+                            --output json
+
+                        echo ""
+                        echo "Verifying IAM OIDC provider exists..."
+
+                        aws iam get-open-id-connect-provider \
+                            --open-id-connect-provider-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}" \
+                            >/dev/null
+
+                        echo "Correct EKS OIDC provider exists."
+
+                        echo ""
+                        echo "Expected IRSA subject:"
+                        echo "system:serviceaccount:${LBC_NAMESPACE}:${LBC_SERVICE_ACCOUNT}"
+
+                        echo ""
+                        echo "ServiceAccount annotation:"
+                        kubectl get serviceaccount \
+                            "${LBC_SERVICE_ACCOUNT}" \
+                            -n "${LBC_NAMESPACE}" \
+                            -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'
+
+                        echo ""
+
+                        # ================================================
                         # RESTART CONTROLLER
                         # ================================================
 
@@ -1082,6 +1136,40 @@ PY
                             -f k8s/ingress.yml \
                             -n "${K8S_NAMESPACE}"
 
+                        # ================================================
+                        # WAIT FOR ALB
+                        # ================================================
+
+                        echo ""
+                        echo "=========================================="
+                        echo "WAITING FOR AWS ALB"
+                        echo "=========================================="
+
+                        ALB_ADDRESS=""
+
+                        for i in $(seq 1 30); do
+
+                            ALB_ADDRESS=$(kubectl get ingress \
+                                -n "${K8S_NAMESPACE}" \
+                                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' \
+                                2>/dev/null || true)
+
+                            if [ -n "${ALB_ADDRESS}" ]; then
+                                echo "ALB DNS:"
+                                echo "${ALB_ADDRESS}"
+                                break
+                            fi
+
+                            echo "Waiting for ALB... (${i}/30)"
+                            sleep 10
+
+                        done
+
+                        if [ -z "${ALB_ADDRESS}" ]; then
+                            echo "WARNING: ALB DNS is not available yet."
+                            kubectl describe ingress \
+                                -n "${K8S_NAMESPACE}" || true
+                        fi
 
                         # ================================================
                         # FINAL VERIFICATION
@@ -1128,6 +1216,32 @@ PY
 
                             echo "ALB DNS:"
                             echo "${ALB_ADDRESS}"
+
+                            echo ""
+                            echo "=========================================="
+                            echo "TESTING APPLICATION THROUGH ALB"
+                            echo "=========================================="
+
+                            echo "Testing:"
+                            echo "http://${ALB_ADDRESS}"
+
+                            HTTP_STATUS=$(curl -sS -o /tmp/flipkart-alb-response.html \
+                                -w "%{http_code}" \
+                                --connect-timeout 10 \
+                                --max-time 30 \
+                                "http://${ALB_ADDRESS}" || true)
+
+                            echo "HTTP status: ${HTTP_STATUS}"
+
+                            if [ "${HTTP_STATUS}" = "200" ]; then
+                                echo "Application is reachable through AWS ALB."
+                            else
+                                echo "WARNING: ALB returned HTTP status ${HTTP_STATUS}."
+                                echo "Response preview:"
+                                head -20 /tmp/flipkart-alb-response.html 2>/dev/null || true
+                            fi
+
+                            rm -f /tmp/flipkart-alb-response.html
 
                         else
 
