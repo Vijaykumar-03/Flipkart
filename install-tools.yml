@@ -28,7 +28,7 @@
     grafana_release: "kube-prometheus-stack"
 
     # EKS API access
-    eks_cluster_security_group: "sg-0cea97d22308e3dd3"
+    eks_cluster_security_group: "sg-0027bc3bb573ecc8c"
     ec2_security_group: "sg-05df204b7b36f890e"
 
   tasks:
